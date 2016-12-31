@@ -82,6 +82,7 @@ Trie.prototype.get = function (key, cb) {
  * Gets a value given a `key`
  * @method get
  * @param {Buffer|String} key - the key to search for
+ * @param {Buffer|String} root - the root to search with
  * @param {Function} cb A callback `Function` which is given the arguments `err` - for errors that may have occured and `value` - the found value in a `Buffer` or if no value was found `null`
  */
 Trie.prototype.getWithRoot = function (key, root, cb) {
@@ -264,6 +265,7 @@ Trie.prototype._batchNodes = function (opStack, cb) {
  * It returns a `stack` of nodes to the closet node
  * @method _findPath
  * @param {String|Buffer} - key - the search key
+ * @param {String|Buffer} - root - the root to search with
  * @param {Function} - cb - the callback function. Its is given the following
  * arguments
  *  - err - any errors encontered
