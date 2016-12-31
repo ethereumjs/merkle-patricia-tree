@@ -64,10 +64,32 @@ function Trie (db, root) {
  */
 Trie.prototype.get = function (key, cb) {
   var self = this
+  var root = self.root
 
   key = ethUtil.toBuffer(key)
 
-  self._findPath(key, function (err, node, remainder, stack) {
+  self._findPath(key, root, function (err, node, remainder, stack) {
+    var value = null
+    if (node && remainder.length === 0) {
+      value = node.value
+    }
+
+    cb(err, value)
+  })
+}
+
+/**
+ * Gets a value given a `key`
+ * @method get
+ * @param {Buffer|String} key - the key to search for
+ * @param {Function} cb A callback `Function` which is given the arguments `err` - for errors that may have occured and `value` - the found value in a `Buffer` or if no value was found `null`
+ */
+Trie.prototype.getWithRoot = function (key, root, cb) {
+  var self = this
+
+  key = ethUtil.toBuffer(key)
+
+  self._findPath(key, root, function (err, node, remainder, stack) {
     var value = null
     if (node && remainder.length === 0) {
       value = node.value
@@ -86,6 +108,7 @@ Trie.prototype.get = function (key, cb) {
  */
 Trie.prototype.put = function (key, value, cb) {
   var self = this
+  var root = self.root
 
   key = ethUtil.toBuffer(key)
   value = ethUtil.toBuffer(value)
@@ -96,9 +119,9 @@ Trie.prototype.put = function (key, value, cb) {
     cb = callTogether(cb, self.sem.leave)
 
     self.sem.take(function () {
-      if (self.root.toString('hex') !== ethUtil.SHA3_RLP.toString('hex')) {
+      if (root.toString('hex') !== ethUtil.SHA3_RLP.toString('hex')) {
         // first try to find the give key or its nearst node
-        self._findPath(key, function (err, foundValue, keyRemainder, stack) {
+        self._findPath(key, root, function (err, foundValue, keyRemainder, stack) {
           if (err) {
             return cb(err)
           }
@@ -120,12 +143,13 @@ Trie.prototype.put = function (key, value, cb) {
  */
 Trie.prototype.del = function (key, cb) {
   var self = this
+  var root = self.root
 
   key = ethUtil.toBuffer(key)
   cb = callTogether(cb, self.sem.leave)
 
   self.sem.take(function () {
-    self._findPath(key, function (err, foundValue, keyRemainder, stack) {
+    self._findPath(key, root, function (err, foundValue, keyRemainder, stack) {
       if (err) {
         return cb(err)
       }
@@ -248,9 +272,9 @@ Trie.prototype._batchNodes = function (opStack, cb) {
  *  - stack - an array of nodes that forms the path to node we are searching for
  */
 
-Trie.prototype._findPath = function (targetKey, cb) {
+Trie.prototype._findPath = function (targetKey, root, cb) {
   var self = this
-  var root = self.root
+  var root = root || self.root
   var stack = []
   targetKey = TrieNode.stringToNibbles(targetKey)
 
@@ -302,7 +326,7 @@ Trie.prototype._findPath = function (targetKey, cb) {
  * Finds all nodes that store k,v values
  */
 Trie.prototype._findNode = function (key, root, stack, cb) {
-  this._findPath(key, function () {
+  this._findPath(key, root, function () {
     cb.apply(null, arguments)
   })
 }

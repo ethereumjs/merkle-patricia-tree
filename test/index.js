@@ -29,6 +29,13 @@ tape('simple save and retrive', function (tester) {
     })
   })
 
+  it('should getWithRoot a value', function (t) {
+    trie.getWithRoot('test', trie.root, function (err, value) {
+      t.equal(value.toString(), 'one')
+      t.end(err)
+    })
+  })
+
   it('should update a value', function (t) {
     trie.put('test', new Buffer('two'), function () {
       trie.get('test', function (err, value) {
@@ -72,6 +79,14 @@ tape('simple save and retrive', function (tester) {
     })
   })
 
+  it('should getWithRoot a value that is in a branch', function (t) {
+    trie.getWithRoot(new Buffer('doge'), trie.root, function (err, value) {
+      t.equal(value.toString(), 'coin')
+      t.end(err)
+    })
+  })
+
+
   it('should delete from a branch', function (t) {
     trie.del('doge', function (err1, stack) {
       trie.get('doge', function (err2, value) {
@@ -99,6 +114,13 @@ tape('storing longer values', function (tester) {
 
   it('should retreive a longer value', function (t) {
     trie.get(new Buffer('done'), function (err, value) {
+      t.equal(value.toString(), longString)
+      t.end(err)
+    })
+  })
+
+  it('should getWithRoot retreive a longer value', function (t) {
+    trie.getWithRoot(new Buffer('done'), trie.root, function (err, value) {
       t.equal(value.toString(), longString)
       t.end(err)
     })
