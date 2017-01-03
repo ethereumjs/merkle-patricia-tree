@@ -86,7 +86,6 @@ tape('simple save and retrive', function (tester) {
     })
   })
 
-
   it('should delete from a branch', function (t) {
     trie.del('doge', function (err1, stack) {
       trie.get('doge', function (err2, value) {

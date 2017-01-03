@@ -276,7 +276,7 @@ Trie.prototype._batchNodes = function (opStack, cb) {
 
 Trie.prototype._findPath = function (targetKey, root, cb) {
   var self = this
-  var root = root || self.root
+  root = root || self.root
   var stack = []
   targetKey = TrieNode.stringToNibbles(targetKey)
 
