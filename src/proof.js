@@ -41,7 +41,7 @@ exports.verifyProof = function (rootHash, key, proof, cb) {
   var wantHash = ethUtil.toBuffer(rootHash)
   for (var i = 0; i < proof.length; i++) {
     var p = ethUtil.toBuffer(proof[i])
-    var hash = ethUtil.sha3(proof[i])
+    var hash = ethUtil.keccak256(proof[i])
     if (Buffer.compare(hash, wantHash)) {
       return cb(new Error('Bad proof node ' + i + ': hash mismatch'))
     }
