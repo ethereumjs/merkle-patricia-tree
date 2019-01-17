@@ -67,10 +67,19 @@ function doKeysMatch (keyA, keyB) {
   return length === keyA.length && length === keyB.length
 }
 
+function consumeCommonPrefix (key1, key2) {
+  const commonPrefixLen = matchingNibbleLength(key1, key2)
+  const commonPrefix = key1.slice(0, commonPrefixLen)
+  const key1Remainder = key1.slice(commonPrefixLen)
+  const key2Remainder = key2.slice(commonPrefixLen)
+  return [commonPrefix, key1Remainder, key2Remainder]
+}
+
 module.exports = {
   stringToNibbles,
   bufferToNibbles,
   nibblesToBuffer,
   matchingNibbleLength,
-  doKeysMatch
+  doKeysMatch,
+  consumeCommonPrefix
 }
