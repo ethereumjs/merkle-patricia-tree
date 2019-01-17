@@ -8,10 +8,10 @@ const semaphore = require('semaphore')
 const ReadStream = require('./readStream')
 const PrioritizedTaskExecutor = require('./prioritizedTaskExecutor')
 const { callTogether, asyncFirstSeries } = require('./util/async')
-const { bufferToNibbles, stringToNibbles, matchingNibbleLength, doKeysMatch } = require('./util/nibbles')
+const { bufferToNibbles, stringToNibbles, matchingNibbleLength, doKeysMatch, consumeCommonPrefix } = require('./util/nibbles')
 const { decodeNode, NODE_TYPE_NULL, NODE_TYPE_BRANCH,
   NODE_TYPE_EXTENSION, NODE_TYPE_LEAF, NULL_NODE,
-  LeafNode
+  BranchNode, ExtensionNode, LeafNode
 } = require('./node')
 
 /**
@@ -69,7 +69,6 @@ module.exports = class Trie {
     key = bufferToNibbles(key)
 
     const rootNode = await this._getNode(this.root)
-    console.log(rootNode)
 
     const v = await this._get(rootNode, key)
     return v
@@ -100,23 +99,78 @@ module.exports = class Trie {
     const rootNode = await this._getNode(this.root)
 
     const newNode = await this._put(rootNode, key, value)
-    console.log(newNode)
     this.root = newNode.hash()
     if (this.root !== this.EMPTY_TRIE_ROOT) {
       this._persistNode(newNode)
     }
-    console.log(this.root)
-    //async.nextTick(cb)
   }
 
   async _put (node, key, value) {
     const type = node.type()
     if (type === NODE_TYPE_NULL) {
-      return new LeafNode(LeafNode.encodeKey(key), value)
+      return new LeafNode(key, value)
     } else if (type === NODE_TYPE_BRANCH) {
-    } else if (type === NODE_TYPE_EXTENSION || NODE_TYPE_LEAF) {
+      if (key.length === 0) {
+        node.value = value
+      } else {
+        const nextNode = await this.getNode(node.nextNode(key[0]))
+        const newNode = await this._put(nextNode, key.slice(1), value)
+        await this._persistNode(newNode)
+        node.setBranch(i, newNode.hash())
+      }
+      return node
+    } else if (type === NODE_TYPE_EXTENSION) {
+      return this._putExtension(node, key, value)
+    } else if (type === NODE_TYPE_LEAF) {
+      return this._putLeaf(node, key, value)
     } else {
       throw new Error('Invalid node type')
+    }
+  }
+
+  async _putExtension (node, key, value) {
+    const curKey = node.nibbles()
+    if (doKeysMatch(key, curKey)) {
+      const nextNode = await this._getNode(node.value())
+      const newNode = await this._put(nextNode, keyRemainder, value)
+    }
+  }
+
+  async _putLeaf (node, key, value) {
+    console.log('_putLeaf', node, key, value)
+    const curKey = node.nibbles()
+    const [commonPrefix, keyRemainder, curKeyRemainder] = consumeCommonPrefix(key, curKey)
+    console.log(commonPrefix, keyRemainder, curKeyRemainder)
+    let newNode
+    if (keyRemainder.length === 0 && curKeyRemainder.length === 0) {
+      node.setValue(value)
+      return node
+    } else if (!curKeyRemainder) {
+      const nextNode = new LeafNode(keyRemainder.slice(1), value)
+      await this._persistNode(nextNode)
+      newNode = new BranchNode()
+      newNode.value = node.value
+      newNode.setBranch(keyRemainder[0], nextNode.hash())
+    } else {
+      newNode = new BranchNode()
+      const otherNode = new LeafNode(curKeyRemainder.slice(1), node.value())
+      await this._persistNode(otherNode)
+      newNode.setBranch(curKeyRemainder[0], otherNode.hash())
+
+      if (keyRemainder) {
+        const finalNode = new LeafNode(keyRemainder.slice(1), value)
+        await this._persistNode(finalNode)
+        newNode.setBranch(keyRemainder[0], finalNode.hash())
+      } else {
+        newNode.value = value
+      }
+    }
+
+    if (commonPrefix) {
+      await this._persistNode(newNode)
+      return new ExtensionNode(commonPrefix, newNode.hash())
+    } else {
+      return newNode
     }
   }
 
@@ -127,9 +181,7 @@ module.exports = class Trie {
     const rootNode = await this._getNode(this.root)
 
     const newNode = await this._del(rootNode, key)
-    this.root = newNode
-
-    async.nextTick(cb)
+    this.root = newNode.hash()
   }
 
   async _del (node, key) {
@@ -138,7 +190,9 @@ module.exports = class Trie {
     if (type === NODE_TYPE_NULL) {
       return NULL_NODE
     } else if (type === NODE_TYPE_BRANCH) {
-    } else if (type === NODE_TYPE_EXTENSION || NODE_TYPE_LEAF) {
+    } else if (type === NODE_TYPE_EXTENSION) {
+    } else if (type === NODE_TYPE_LEAF) {
+      return NULL_NODE
     } else {
       throw new Error('Invalid node type')
     }
@@ -150,9 +204,7 @@ module.exports = class Trie {
     }
 
     try {
-      console.log(hash)
       const v = await this.getRawP(hash)
-      console.log(v)
       const node = decodeNode(v)
       return node
     } catch (err) {
@@ -163,6 +215,7 @@ module.exports = class Trie {
   async _persistNode (node) {
     const k = node.hash()
     const v = node.serialize()
+    console.log('persist', node, k, v)
     await this.putRawP(k, v)
   }
 
@@ -227,24 +280,5 @@ module.exports = class Trie {
     }
 
     async.each(this._putDBs, del, cb)
-  }
-
-  // writes a single node to dbs
-  _putNode (node, cb) {
-    const hash = node.hash()
-    const serialized = node.serialize()
-    this._putRaw(hash, serialized, cb)
-  }
-
-  // writes many nodes to db
-  _batchNodes (opStack, cb) {
-    function dbBatch (db, cb) {
-      db.batch(opStack, {
-        keyEncoding: 'binary',
-        valueEncoding: 'binary'
-      }, cb)
-    }
-
-    async.each(this._putDBs, dbBatch, cb)
   }
 }

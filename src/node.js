@@ -1,6 +1,6 @@
 const rlp = require('rlp')
 const ethUtil = require('ethereumjs-util')
-const { stringToNibbles, nibblesToBuffer } = require('./util/nibbles')
+const { bufferToNibbles, stringToNibbles, nibblesToBuffer } = require('./util/nibbles')
 const { isTerminator, addHexPrefix, removeHexPrefix } = require('./util/hex')
 
 const NODE_TYPE_NULL = 'null'
@@ -15,16 +15,14 @@ function decodeNode (v) {
   if (v.length === 0) {
     return NULL_NODE
   }
-  
+
   v = rlp.decode(v)
 
   if (v.length === 17) {
 
   } else if (v.length === 2) {
-    return new LeafNode(v[0], v[1])
+    return new LeafNode(LeafNode.decodeKey(bufferToNibbles(v[0])), v[1])
   }
-
-  console.log(v)
 }
 
 class Node {
@@ -56,27 +54,72 @@ class NullNode extends Node {
 }
 
 class BranchNode extends Node {
+  constructor () {
+    super()
+    this._branches = Array(17).fill(Buffer.from([]))
+  }
+
   type () {
     return NODE_TYPE_BRANCH
   }
 
+  set value (v) {
+    this._branches[16] = v
+  }
+
+  value () {
+    return this._branches[16]
+  }
+
+  setBranch (i, v) {
+    this._branches[i] = v
+  }
+
   serialize () {
+    return rlp.encode(this._branches)
+  }
+
+  nextNode (i) {
+    return this._branches[i]
   }
 }
 
 class ExtensionNode extends Node {
+  constructor (nibbles, value) {
+    super()
+    this._nibbles = nibbles
+    this._value = value
+  }
+
+  static encodeKey (key) {
+    return addHexPrefix(key, false)
+  }
+
   type () {
     return NODE_TYPE_EXTENSION
   }
 
+  value () {
+    return this._value
+  }
+
+  nibbles () {
+    return this._nibbles
+  }
+
+  encodedKey () {
+    return ExtensionNode.encodeKey(this._nibbles)
+  }
+
   serialize () {
+    return rlp.encode([nibblesToBuffer(this.encodedKey()), this._value])
   }
 }
 
 class LeafNode extends Node {
-  constructor (key, value) {
+  constructor (nibbles, value) {
     super()
-    this._key = key
+    this._nibbles = nibbles
     this._value = value
   }
 
@@ -84,16 +127,33 @@ class LeafNode extends Node {
     return addHexPrefix(key, true)
   }
 
+  static decodeKey (encodedKey) {
+    return removeHexPrefix(encodedKey)
+  }
+
   type () {
     return NODE_TYPE_LEAF
+  }
+
+  setValue (value) {
+    this._value = value
   }
 
   value () {
     return this._value
   }
 
+  nibbles () {
+    return this._nibbles
+  }
+
+  encodedKey () {
+    return LeafNode.encodeKey(this._nibbles)
+  }
+
   serialize () {
-    return rlp.encode([this._key, this._value])
+    console.log('serialize', 'nibbles', this._nibbles, 'encoded', this.encodedKey())
+    return rlp.encode([nibblesToBuffer(this.encodedKey()), this._value])
   }
 }
 
