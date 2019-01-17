@@ -5,20 +5,21 @@
  * @returns {Array} - returns buffer of encoded data
  **/
 function addHexPrefix (key, terminator) {
+  let res = key.slice()
   // odd
-  if (key.length % 2) {
-    key.unshift(1)
+  if (res.length % 2) {
+    res.unshift(1)
   } else {
     // even
-    key.unshift(0)
-    key.unshift(0)
+    res.unshift(0)
+    res.unshift(0)
   }
 
   if (terminator) {
-    key[0] += 2
+    res[0] += 2
   }
 
-  return key
+  return res
 }
 
 /**
@@ -28,13 +29,15 @@ function addHexPrefix (key, terminator) {
  * @private
  */
 function removeHexPrefix (val) {
-  if (val[0] % 2) {
-    val = val.slice(1)
+  let res = val.slice()
+
+  if (res[0] % 2) {
+    res = res.slice(1)
   } else {
-    val = val.slice(2)
+    res = res.slice(2)
   }
 
-  return val
+  return res
 }
 
 /**
