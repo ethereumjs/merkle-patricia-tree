@@ -1,6 +1,6 @@
 // https://github.com/ethereum/wiki/wiki/Benchmarks
 'use strict'
-const Trie = require('../')
+const Trie = require('../src')
 const ethUtil = require('ethereumjs-util')
 const async = require('async')
 
@@ -25,11 +25,11 @@ function run (cb) {
       return i <= ROUNDS
     },
     function (done) {
-      seed = ethUtil.sha3(seed)
+      seed = ethUtil.keccak256(seed)
       if (SYMMETRIC) {
         trie.put(seed, seed, genRoot)
       } else {
-        let val = ethUtil.sha3(seed)
+        let val = ethUtil.keccak256(seed)
         trie.put(seed, val, genRoot)
       }
 

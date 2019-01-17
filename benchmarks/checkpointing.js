@@ -1,10 +1,11 @@
-var iterations = 500
-var samples = 20
+const async = require('async')
+const crypto = require('crypto')
+const Trie = require('../src/index.js')
 
-var async = require('async')
-var crypto = require('crypto')
-var Trie = require('../index.js')
-var i
+const iterations = 500
+const samples = 20
+
+let i
 
 function iterTest (numOfIter, cb) {
   var vals = []
