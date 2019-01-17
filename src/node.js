@@ -19,9 +19,15 @@ function decodeNode (v) {
   v = rlp.decode(v)
 
   if (v.length === 17) {
-
+    return BranchNode.fromArray(v)
   } else if (v.length === 2) {
-    return new LeafNode(LeafNode.decodeKey(bufferToNibbles(v[0])), v[1])
+    console.log('decode2', v[0])
+    const key = bufferToNibbles(v[0])
+    if (isTerminator(key)) {
+      return new LeafNode(LeafNode.decodeKey(key), v[1])
+    }
+
+    return new ExtensionNode(ExtensionNode.decodeKey(key), v[1])
   }
 }
 
@@ -56,19 +62,27 @@ class NullNode extends Node {
 class BranchNode extends Node {
   constructor () {
     super()
-    this._branches = Array(17).fill(Buffer.from([]))
+    this._branches = Array(16).fill(Buffer.from([]))
+    this._value = Buffer.from([])
+  }
+
+  static fromArray (arr) {
+    const node = new BranchNode()
+    node._branches = arr.slice(0, 16)
+    node._value = arr[16]
+    return node
   }
 
   type () {
     return NODE_TYPE_BRANCH
   }
 
-  set value (v) {
-    this._branches[16] = v
+  setValue (v) {
+    this._value = v
   }
 
   value () {
-    return this._branches[16]
+    return this._value
   }
 
   setBranch (i, v) {
@@ -76,7 +90,7 @@ class BranchNode extends Node {
   }
 
   serialize () {
-    return rlp.encode(this._branches)
+    return rlp.encode([...this._branches, this._value])
   }
 
   nextNode (i) {
@@ -93,6 +107,10 @@ class ExtensionNode extends Node {
 
   static encodeKey (key) {
     return addHexPrefix(key, false)
+  }
+
+  static decodeKey (key) {
+    return removeHexPrefix(key)
   }
 
   type () {
@@ -152,7 +170,6 @@ class LeafNode extends Node {
   }
 
   serialize () {
-    console.log('serialize', 'nibbles', this._nibbles, 'encoded', this.encodedKey())
     return rlp.encode([nibblesToBuffer(this.encodedKey()), this._value])
   }
 }

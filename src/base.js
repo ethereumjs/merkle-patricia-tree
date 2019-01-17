@@ -69,6 +69,7 @@ module.exports = class Trie {
     key = bufferToNibbles(key)
 
     const rootNode = await this._getNode(this.root)
+    console.log('get root', this.root, rootNode)
 
     const v = await this._get(rootNode, key)
     return v
@@ -76,16 +77,33 @@ module.exports = class Trie {
   }
 
   async _get (node, key) {
+    console.log('_get', node, key)
     const type = node.type()
     if (type === NODE_TYPE_NULL) {
       return NULL_NODE.value()
     } else if (type === NODE_TYPE_BRANCH) {
       if (key.length === 0) {
-        return node
+        return node.value()
       }
+
+      const nextNode = await this._getNode(node.nextNode(key[0]))
+      return this._get(nextNode, key.slice(1))
     } else if (type === NODE_TYPE_EXTENSION) {
+      const curKey = node.nibbles()
+      if (matchingNibbleLength(key, curKey) === 0) {
+        return NULL_NODE.value()
+      }
+
+      const nextNode = await this._getNode(node.value())
+      console.log(nextNode)
+      return this._get(nextNode, key.slice(curKey.length))
     } else if (type === NODE_TYPE_LEAF) {
-      return node.value()
+      const curKey = node.nibbles()
+      if (doKeysMatch(key, curKey)) {
+        return node.value()
+      }
+
+      return NULL_NODE.value()
     } else {
       throw new Error('Invalid node type')
     }
@@ -101,11 +119,13 @@ module.exports = class Trie {
     const newNode = await this._put(rootNode, key, value)
     this.root = newNode.hash()
     if (this.root !== this.EMPTY_TRIE_ROOT) {
+      console.log('put setting root', this.root)
       this._persistNode(newNode)
     }
   }
 
   async _put (node, key, value) {
+    console.log('_put', node, key, value)
     const type = node.type()
     if (type === NODE_TYPE_NULL) {
       return new LeafNode(key, value)
@@ -113,10 +133,10 @@ module.exports = class Trie {
       if (key.length === 0) {
         node.value = value
       } else {
-        const nextNode = await this.getNode(node.nextNode(key[0]))
+        const nextNode = await this._getNode(node.nextNode(key[0]))
         const newNode = await this._put(nextNode, key.slice(1), value)
         await this._persistNode(newNode)
-        node.setBranch(i, newNode.hash())
+        node.setBranch(key[0], newNode.hash())
       }
       return node
     } else if (type === NODE_TYPE_EXTENSION) {
@@ -130,9 +150,39 @@ module.exports = class Trie {
 
   async _putExtension (node, key, value) {
     const curKey = node.nibbles()
-    if (doKeysMatch(key, curKey)) {
+    const [commonPrefix, keyRemainder, curKeyRemainder] = consumeCommonPrefix(key, curKey)
+    let newNode
+    console.log(commonPrefix, keyRemainder, curKeyRemainder)
+    if (keyRemainder.length === 0 && curKeyRemainder.length === 0) {
       const nextNode = await this._getNode(node.value())
-      const newNode = await this._put(nextNode, keyRemainder, value)
+      newNode = await this._put(nextNode, keyRemainder, value)
+    } else if (curKeyRemainder.length === 0) {
+      const nextNode = await this._getNode(node.value())
+      newNode = await this._put(nextNode, keyRemainder, value)
+    } else {
+      newNode = new BranchNode()
+      if (curKeyRemainder.length === 1) {
+        newNode.setBranch(curKeyRemainder[0], node.value())
+      } else {
+        const otherNode = new ExtensionNode(curKeyRemainder.slice(1), node.value())
+        await this._persistNode(otherNode)
+        newNode.setBranch(curKeyRemainder[0], otherNode.hash())
+      }
+
+      if (keyRemainder.length > 0) {
+        const finalNode = new LeafNode(keyRemainder.slice(1), value)
+        await this._persistNode(finalNode)
+        newNode.setBranch(keyRemainder[0], finalNode.hash())
+      } else {
+        newNode.setValue(value)
+      }
+    }
+
+    if (commonPrefix.length > 0) {
+      await this._persistNode(newNode)
+      return new ExtensionNode(commonPrefix, newNode.hash())
+    } else {
+      return newNode
     }
   }
 
@@ -145,11 +195,11 @@ module.exports = class Trie {
     if (keyRemainder.length === 0 && curKeyRemainder.length === 0) {
       node.setValue(value)
       return node
-    } else if (!curKeyRemainder) {
+    } else if (curKeyRemainder.length === 0) {
       const nextNode = new LeafNode(keyRemainder.slice(1), value)
       await this._persistNode(nextNode)
       newNode = new BranchNode()
-      newNode.value = node.value
+      newNode.setValue(node.value())
       newNode.setBranch(keyRemainder[0], nextNode.hash())
     } else {
       newNode = new BranchNode()
@@ -199,12 +249,16 @@ module.exports = class Trie {
   }
 
   async _getNode (hash) {
+    console.log('_getNode', hash)
     if (hash === NULL_NODE.hash()) {
       return NULL_NODE
     }
 
     try {
       const v = await this.getRawP(hash)
+      if (typeof v === 'undefined') {
+        throw new Error('Node not in db')
+      }
       const node = decodeNode(v)
       return node
     } catch (err) {
