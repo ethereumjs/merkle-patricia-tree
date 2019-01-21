@@ -16,12 +16,13 @@ function decodeNode (v) {
     return NULL_NODE
   }
 
-  v = rlp.decode(v)
+  if (!(v instanceof Array)) {
+    v = rlp.decode(v)
+  }
 
   if (v.length === 17) {
     return BranchNode.fromArray(v)
   } else if (v.length === 2) {
-    console.log('decode2', v[0])
     const key = bufferToNibbles(v[0])
     if (isTerminator(key)) {
       return new LeafNode(LeafNode.decodeKey(key), v[1])
@@ -31,9 +32,31 @@ function decodeNode (v) {
   }
 }
 
+function nodeRefEq (r1, r2) {
+  if (typeof r1 !== typeof r2) return false
+  if (r1.length !== r2.length) return false
+
+  if (Buffer.isBuffer(r1) && Buffer.isBuffer(r2)) {
+    return r1.equals(r2)
+  } else if (Array.isArray(r1) && Array.isArray(r2)) {
+    for (let i in r1) {
+      if (r1[i] !== r2[i]) {
+        return false
+      }
+    }
+    return true
+  }
+
+  return false
+}
+
 class Node {
-  serialize () {
-    return rlp.encode(this.raw)
+  value () {
+    return this._value
+  }
+
+  setValue (v) {
+    this._value = v
   }
 
   hash () {
@@ -42,16 +65,21 @@ class Node {
 }
 
 class NullNode extends Node {
+  constructor () {
+    super()
+    this._value = Buffer.from([])
+  }
+
   type () {
     return NODE_TYPE_NULL
   }
 
-  value () {
+  serialize () {
     return Buffer.from([])
   }
 
-  serialize () {
-    return Buffer.from([])
+  raw () {
+    return this._value
   }
 
   hash () {
@@ -62,8 +90,8 @@ class NullNode extends Node {
 class BranchNode extends Node {
   constructor () {
     super()
-    this._branches = Array(16).fill(Buffer.from([]))
-    this._value = Buffer.from([])
+    this._branches = Array.apply(null, Array(16)) //Array(16).fill(Buffer.from([]))
+    this._value = null //Buffer.from([])
   }
 
   static fromArray (arr) {
@@ -77,24 +105,44 @@ class BranchNode extends Node {
     return NODE_TYPE_BRANCH
   }
 
-  setValue (v) {
-    this._value = v
-  }
-
-  value () {
-    return this._value
-  }
-
   setBranch (i, v) {
     this._branches[i] = v
   }
 
+  raw () {
+    return [...this._branches, this._value]
+  }
+
   serialize () {
-    return rlp.encode([...this._branches, this._value])
+    return rlp.encode(this.raw())
   }
 
   nextNode (i) {
     return this._branches[i]
+  }
+
+  branchCount () {
+    let c = 0
+    for (let i in this._branches) {
+      let b = this._branches[i]
+      if (typeof b !== 'undefined' && b !== null && b.length > 0) {
+        c++
+      }
+    }
+
+    return c
+  }
+
+  getNextBranch () {
+    for (let i in this._branches) {
+      i = parseInt(i)
+      let b = this._branches[i]
+      if (typeof b !== 'undefined' && b !== null && b.length > 0) {
+        return [i, b]
+      }
+    }
+
+    return [0, null]
   }
 }
 
@@ -117,10 +165,6 @@ class ExtensionNode extends Node {
     return NODE_TYPE_EXTENSION
   }
 
-  value () {
-    return this._value
-  }
-
   nibbles () {
     return this._nibbles
   }
@@ -129,8 +173,12 @@ class ExtensionNode extends Node {
     return ExtensionNode.encodeKey(this._nibbles)
   }
 
+  raw () {
+    return [nibblesToBuffer(this.encodedKey()), this._value]
+  }
+
   serialize () {
-    return rlp.encode([nibblesToBuffer(this.encodedKey()), this._value])
+    return rlp.encode(this.raw())
   }
 }
 
@@ -153,14 +201,6 @@ class LeafNode extends Node {
     return NODE_TYPE_LEAF
   }
 
-  setValue (value) {
-    this._value = value
-  }
-
-  value () {
-    return this._value
-  }
-
   nibbles () {
     return this._nibbles
   }
@@ -169,176 +209,12 @@ class LeafNode extends Node {
     return LeafNode.encodeKey(this._nibbles)
   }
 
-  serialize () {
-    return rlp.encode([nibblesToBuffer(this.encodedKey()), this._value])
-  }
-}
-
-module.exports = class TrieNode {
-  constructor (type, key, value) {
-    if (Array.isArray(type)) {
-      // parse raw node
-      this.parseNode(type)
-    } else {
-      this.type = type
-      if (type === 'branch') {
-        var values = key
-        this.raw = Array.apply(null, Array(17))
-        if (values) {
-          values.forEach(function (keyVal) {
-            this.set.apply(this, keyVal)
-          })
-        }
-      } else {
-        this.raw = Array(2)
-        this.setValue(value)
-        this.setKey(key)
-      }
-    }
-  }
-
-  /**
-   * Determines the node type.
-   * @private
-   * @returns {String} - the node type
-   *   - leaf - if the node is a leaf
-   *   - branch - if the node is a branch
-   *   - extention - if the node is an extention
-   *   - unknown - if something else got borked
-   */
-  static getNodeType (node) {
-    if (node.length === 17) {
-      return 'branch'
-    } else if (node.length === 2) {
-      var key = stringToNibbles(node[0])
-      if (isTerminator(key)) {
-        return 'leaf'
-      }
-
-      return 'extention'
-    }
-  }
-
-  static isRawNode (node) {
-    return Array.isArray(node) && !Buffer.isBuffer(node)
-  }
-
-  get value () {
-    return this.getValue()
-  }
-
-  set value (v) {
-    this.setValue(v)
-  }
-
-  get key () {
-    return this.getKey()
-  }
-
-  set key (k) {
-    this.setKey(k)
-  }
-
-  parseNode (rawNode) {
-    this.raw = rawNode
-    this.type = TrieNode.getNodeType(rawNode)
-  }
-
-  setValue (key, value) {
-    if (this.type !== 'branch') {
-      this.raw[1] = key
-    } else {
-      if (arguments.length === 1) {
-        value = key
-        key = 16
-      }
-      this.raw[key] = value
-    }
-  }
-
-  getValue (key) {
-    if (this.type === 'branch') {
-      if (arguments.length === 0) {
-        key = 16
-      }
-
-      var val = this.raw[key]
-      if (val !== null && val !== undefined && val.length !== 0) {
-        return val
-      }
-    } else {
-      return this.raw[1]
-    }
-  }
-
-  setKey (key) {
-    if (this.type !== 'branch') {
-      if (Buffer.isBuffer(key)) {
-        key = stringToNibbles(key)
-      } else {
-        key = key.slice(0) // copy the key
-      }
-
-      key = addHexPrefix(key, this.type === 'leaf')
-      this.raw[0] = nibblesToBuffer(key)
-    }
-  }
-
-  getKey () {
-    if (this.type !== 'branch') {
-      var key = this.raw[0]
-      key = removeHexPrefix(stringToNibbles(key))
-      return (key)
-    }
+  raw () {
+    return [nibblesToBuffer(this.encodedKey()), this._value]
   }
 
   serialize () {
-    return rlp.encode(this.raw)
-  }
-
-  hash () {
-    return ethUtil.keccak256(this.serialize())
-  }
-
-  toString () {
-    var out = this.type
-    out += ': ['
-    this.raw.forEach(function (el) {
-      if (Buffer.isBuffer(el)) {
-        out += el.toString('hex') + ', '
-      } else if (el) {
-        out += 'object, '
-      } else {
-        out += 'empty, '
-      }
-    })
-    out = out.slice(0, -2)
-    out += ']'
-    return out
-  }
-
-  getChildren () {
-    var children = []
-    switch (this.type) {
-      case 'leaf':
-        // no children
-        break
-      case 'extention':
-        // one child
-        children.push([this.key, this.getValue()])
-        break
-      case 'branch':
-        for (var index = 0, end = 16; index < end; index++) {
-          var value = this.getValue(index)
-          if (value) {
-            children.push([
-              [index], value
-            ])
-          }
-        }
-        break
-    }
-    return children
+    return rlp.encode(this.raw())
   }
 }
 
@@ -354,5 +230,6 @@ module.exports = {
   BranchNode,
   ExtensionNode,
   LeafNode,
-  decodeNode
+  decodeNode,
+  nodeRefEq
 }

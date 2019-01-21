@@ -9,7 +9,7 @@ const ReadStream = require('./readStream')
 const PrioritizedTaskExecutor = require('./prioritizedTaskExecutor')
 const { callTogether, asyncFirstSeries } = require('./util/async')
 const { bufferToNibbles, stringToNibbles, matchingNibbleLength, doKeysMatch, consumeCommonPrefix } = require('./util/nibbles')
-const { decodeNode, NODE_TYPE_NULL, NODE_TYPE_BRANCH,
+const { decodeNode, nodeRefEq, NODE_TYPE_NULL, NODE_TYPE_BRANCH,
   NODE_TYPE_EXTENSION, NODE_TYPE_LEAF, NULL_NODE,
   BranchNode, ExtensionNode, LeafNode
 } = require('./node')
@@ -69,15 +69,22 @@ module.exports = class Trie {
     key = bufferToNibbles(key)
 
     const rootNode = await this._getNode(this.root)
-    console.log('get root', this.root, rootNode)
 
-    const v = await this._get(rootNode, key)
+    let v = await this._get(rootNode, key)
+
+    if (v.length === 0) {
+      v = null
+    }
+
+    if (typeof cb !== 'undefined') {
+      return cb(null, v)
+    }
+
     return v
     // async.nextTick(cb, v)
   }
 
   async _get (node, key) {
-    console.log('_get', node, key)
     const type = node.type()
     if (type === NODE_TYPE_NULL) {
       return NULL_NODE.value()
@@ -95,7 +102,6 @@ module.exports = class Trie {
       }
 
       const nextNode = await this._getNode(node.value())
-      console.log(nextNode)
       return this._get(nextNode, key.slice(curKey.length))
     } else if (type === NODE_TYPE_LEAF) {
       const curKey = node.nibbles()
@@ -110,6 +116,10 @@ module.exports = class Trie {
   }
 
   async put (key, value, cb) {
+    if (value === null || typeof value === 'undefined') {
+      return this.del(key)
+    }
+
     key = ethUtil.toBuffer(key)
     value = ethUtil.toBuffer(value)
 
@@ -119,24 +129,32 @@ module.exports = class Trie {
     const newNode = await this._put(rootNode, key, value)
     this.root = newNode.hash()
     if (this.root !== this.EMPTY_TRIE_ROOT) {
-      console.log('put setting root', this.root)
-      this._persistNode(newNode)
+      this._persistRootNode(newNode)
+    }
+
+    if (typeof cb !== 'undefined') {
+      process.nextTick(cb)
     }
   }
 
+  async _persistRootNode(node) {
+    const k = node.hash()
+    const v = node.serialize()
+    await this.putRawP(k, v)
+  }
+
   async _put (node, key, value) {
-    console.log('_put', node, key, value)
     const type = node.type()
     if (type === NODE_TYPE_NULL) {
       return new LeafNode(key, value)
     } else if (type === NODE_TYPE_BRANCH) {
       if (key.length === 0) {
-        node.value = value
+        node.setValue(value)
       } else {
         const nextNode = await this._getNode(node.nextNode(key[0]))
         const newNode = await this._put(nextNode, key.slice(1), value)
-        await this._persistNode(newNode)
-        node.setBranch(key[0], newNode.hash())
+        const newNodeRef = await this._persistNode(newNode)
+        node.setBranch(key[0], newNodeRef)
       }
       return node
     } else if (type === NODE_TYPE_EXTENSION) {
@@ -152,7 +170,6 @@ module.exports = class Trie {
     const curKey = node.nibbles()
     const [commonPrefix, keyRemainder, curKeyRemainder] = consumeCommonPrefix(key, curKey)
     let newNode
-    console.log(commonPrefix, keyRemainder, curKeyRemainder)
     if (keyRemainder.length === 0 && curKeyRemainder.length === 0) {
       const nextNode = await this._getNode(node.value())
       newNode = await this._put(nextNode, keyRemainder, value)
@@ -165,60 +182,58 @@ module.exports = class Trie {
         newNode.setBranch(curKeyRemainder[0], node.value())
       } else {
         const otherNode = new ExtensionNode(curKeyRemainder.slice(1), node.value())
-        await this._persistNode(otherNode)
-        newNode.setBranch(curKeyRemainder[0], otherNode.hash())
+        const otherNodeRef = await this._persistNode(otherNode)
+        newNode.setBranch(curKeyRemainder[0], otherNodeRef)
       }
 
       if (keyRemainder.length > 0) {
         const finalNode = new LeafNode(keyRemainder.slice(1), value)
-        await this._persistNode(finalNode)
-        newNode.setBranch(keyRemainder[0], finalNode.hash())
+        const finalNodeRef = await this._persistNode(finalNode)
+        newNode.setBranch(keyRemainder[0], finalNodeRef)
       } else {
         newNode.setValue(value)
       }
     }
 
     if (commonPrefix.length > 0) {
-      await this._persistNode(newNode)
-      return new ExtensionNode(commonPrefix, newNode.hash())
+      const newNodeRef = await this._persistNode(newNode)
+      return new ExtensionNode(commonPrefix, newNodeRef)
     } else {
       return newNode
     }
   }
 
   async _putLeaf (node, key, value) {
-    console.log('_putLeaf', node, key, value)
     const curKey = node.nibbles()
     const [commonPrefix, keyRemainder, curKeyRemainder] = consumeCommonPrefix(key, curKey)
-    console.log(commonPrefix, keyRemainder, curKeyRemainder)
     let newNode
     if (keyRemainder.length === 0 && curKeyRemainder.length === 0) {
       node.setValue(value)
       return node
     } else if (curKeyRemainder.length === 0) {
       const nextNode = new LeafNode(keyRemainder.slice(1), value)
-      await this._persistNode(nextNode)
+      const nextNodeRef = await this._persistNode(nextNode)
       newNode = new BranchNode()
       newNode.setValue(node.value())
-      newNode.setBranch(keyRemainder[0], nextNode.hash())
+      newNode.setBranch(keyRemainder[0], nextNodeRef)
     } else {
       newNode = new BranchNode()
       const otherNode = new LeafNode(curKeyRemainder.slice(1), node.value())
-      await this._persistNode(otherNode)
-      newNode.setBranch(curKeyRemainder[0], otherNode.hash())
+      const otherNodeRef = await this._persistNode(otherNode)
+      newNode.setBranch(curKeyRemainder[0], otherNodeRef)
 
-      if (keyRemainder) {
+      if (keyRemainder.length > 0) {
         const finalNode = new LeafNode(keyRemainder.slice(1), value)
-        await this._persistNode(finalNode)
-        newNode.setBranch(keyRemainder[0], finalNode.hash())
+        const finalNodeRef = await this._persistNode(finalNode)
+        newNode.setBranch(keyRemainder[0], finalNodeRef)
       } else {
-        newNode.value = value
+        newNode.setValue(value)
       }
     }
 
-    if (commonPrefix) {
-      await this._persistNode(newNode)
-      return new ExtensionNode(commonPrefix, newNode.hash())
+    if (commonPrefix.length > 0) {
+      const newNodeRef = await this._persistNode(newNode)
+      return new ExtensionNode(commonPrefix, newNodeRef)
     } else {
       return newNode
     }
@@ -232,6 +247,13 @@ module.exports = class Trie {
 
     const newNode = await this._del(rootNode, key)
     this.root = newNode.hash()
+    if (this.root !== this.EMPTY_TRIE_ROOT) {
+      this._persistNode(newNode)
+    }
+
+    if (typeof cb !== 'undefined') {
+      cb()
+    }
   }
 
   async _del (node, key) {
@@ -240,37 +262,123 @@ module.exports = class Trie {
     if (type === NODE_TYPE_NULL) {
       return NULL_NODE
     } else if (type === NODE_TYPE_BRANCH) {
+      if (key.length === 0) {
+        node.setValue(NULL_NODE.value())
+        return this._normalizeBranchNode(node)
+      }
+
+      const nodeToDelete = await this._getNode(node.nextNode(key[0]))
+      const nextNode = await this._del(nodeToDelete, key.slice(1))
+      const nextNodeRef = await this._persistNode(nextNode)
+
+      if (nodeRefEq(nextNodeRef, node.nextNode(key[0]))) {
+        return node
+      }
+
+      node.setBranch(key[0], nextNodeRef)
+      if (nextNodeRef.length === 0) {
+        return this._normalizeBranchNode(node)
+      }
+
+      return node
     } else if (type === NODE_TYPE_EXTENSION) {
+      const curKey = node.nibbles()
+      if (matchingNibbleLength(key, curKey) === 0) {
+        return node
+      }
+
+      const nextNode = await this._getNode(node.value())
+      const newNextNode = await this._del(nextNode, key.slice(curKey.length))
+      const newNextNodeRef = await this._persistNode(newNextNode)
+
+      if (nodeRefEq(newNextNodeRef, node.value())) {
+        return node
+      }
+
+      if (newNextNode.type() === NODE_TYPE_NULL) {
+        return NULL_NODE
+      } else if (newNextNode.type() === NODE_TYPE_BRANCH) {
+        return new ExtensionNode(curKey, newNextNode.hash())
+      } else if (newNextNode.type() === NODE_TYPE_EXTENSION) {
+        return new ExtensionNode([...curKey, ...newNextNode.nibbles()], newNextNode.value())
+      } else if (newNextNode.type() === NODE_TYPE_LEAF) {
+        return new LeafNode([...curKey, ...newNextNode.nibbles()], newNextNode.value())
+      } else {
+        throw new Error('Invalid node type')
+      }
     } else if (type === NODE_TYPE_LEAF) {
-      return NULL_NODE
+      const curKey = node.nibbles()
+      if (doKeysMatch(key, curKey)) {
+        return NULL_NODE
+      }
+
+      return node
+    } else {
+      throw new Error('Invalid node type')
+    }
+  }
+
+  async _normalizeBranchNode (node) {
+    if (node.branchCount() > 1) {
+      return node
+    }
+
+    if (node.value().length > 0) {
+      return new LeafNode([], node.value())
+    }
+
+    let [nextIdx, nextRef] = node.getNextBranch()
+    if (nextRef === null) {
+      throw new Error('Branch node has no non-null branch')
+    }
+
+    const nextNode = await this._getNode(nextRef)
+    const nextNodeType = nextNode.type()
+
+    if (nextNodeType === NODE_TYPE_EXTENSION) {
+      return new ExtensionNode([nextIdx, ...nextNode.nibbles()], nextNode.value())
+    } else if (nextNodeType === NODE_TYPE_LEAF) {
+      return new LeafNode([nextIdx, ...nextNode.nibbles()], nextNode.value())
+    } else if (nextNodeType === NODE_TYPE_BRANCH) {
+      const nextNodeRef = await this._persistNode(nextNode)
+      return new ExtensionNode([nextIdx], nextNodeRef)
     } else {
       throw new Error('Invalid node type')
     }
   }
 
   async _getNode (hash) {
-    console.log('_getNode', hash)
-    if (hash === NULL_NODE.hash()) {
+    if (hash === NULL_NODE.hash() || hash.length === 0) {
       return NULL_NODE
     }
 
-    try {
-      const v = await this.getRawP(hash)
-      if (typeof v === 'undefined') {
-        throw new Error('Node not in db')
+    let encoded
+    if (hash.length < 32) {
+      encoded = hash
+    } else {
+      try {
+        encoded = await this.getRawP(hash)
+        if (typeof encoded === 'undefined') {
+          throw new Error('Node not in db')
+        }
+      } catch (err) {
+        throw err
       }
-      const node = decodeNode(v)
-      return node
-    } catch (err) {
-      throw err
     }
+
+    return decodeNode(encoded)
   }
 
   async _persistNode (node) {
-    const k = node.hash()
     const v = node.serialize()
-    console.log('persist', node, k, v)
+    if (v.length < 32) {
+      return node.raw()
+    }
+
+    const k = node.hash()
     await this.putRawP(k, v)
+
+    return k
   }
 
   /**
