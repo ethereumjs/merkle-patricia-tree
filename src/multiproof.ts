@@ -1,7 +1,7 @@
 import * as assert from 'assert'
 import { decode, encode } from 'rlp'
 import { keccak256 } from 'ethereumjs-util'
-import {  Trie } from './baseTrie'
+import { Trie } from './baseTrie'
 import { BranchNode, ExtensionNode, LeafNode, EmbeddedNode, decodeRawNode } from './trieNode'
 import { stringToNibbles, nibblesToBuffer, matchingNibbleLength } from './util/nibbles'
 import { addHexPrefix } from './util/hex'
@@ -12,14 +12,14 @@ export enum Opcode {
   Hasher = 1,
   Leaf = 2,
   Extension = 3,
-  Add = 4
+  Add = 4,
 }
 
 export enum NodeType {
   Branch = 0,
-    Leaf = 1,
-    Extension = 2,
-    Hash = 3
+  Leaf = 1,
+  Extension = 2,
+  Hash = 3,
 }
 
 export interface Instruction {
@@ -33,10 +33,7 @@ export interface Multiproof {
   instructions: Instruction[]
 }
 
-export function verifyMultiproof(
-  root: Buffer,
-  proof: Multiproof,
-): boolean {
+export function verifyMultiproof(root: Buffer, proof: Multiproof): boolean {
   const stack: any[] = []
 
   const leaves = proof.keyvals.map((l: Buffer) => decode(l))
@@ -152,7 +149,7 @@ export async function makeMultiproof(trie: Trie, keys: Buffer[]): Promise<Multip
   const proof: Multiproof = {
     hashes: [],
     keyvals: [],
-    instructions: []
+    instructions: [],
   }
 
   if (keys.length === 0) {
@@ -168,11 +165,15 @@ export async function makeMultiproof(trie: Trie, keys: Buffer[]): Promise<Multip
   return _makeMultiproof(trie, trie.root, keysNibbles)
 }
 
-async function _makeMultiproof(trie: Trie, rootHash: EmbeddedNode, keys: number[][]): Promise<Multiproof> {
+async function _makeMultiproof(
+  trie: Trie,
+  rootHash: EmbeddedNode,
+  keys: number[][],
+): Promise<Multiproof> {
   let proof: Multiproof = {
     hashes: [],
     keyvals: [],
-    instructions: []
+    instructions: [],
   }
 
   let root
@@ -225,7 +226,7 @@ async function _makeMultiproof(trie: Trie, rootHash: EmbeddedNode, keys: number[
         proof.hashes.push(...p.hashes)
         proof.keyvals.push(...p.keyvals)
         proof.instructions.push(...p.instructions)
-        
+
         if (addBranchOp) {
           proof.instructions.push({ kind: Opcode.Branch, value: i })
           addBranchOp = false
@@ -241,7 +242,7 @@ async function _makeMultiproof(trie: Trie, rootHash: EmbeddedNode, keys: number[
     for (let i = 0; i < keys.length; i++) {
       const k = keys[i]
       if (matchingNibbleLength(k, extkey) !== extkey.length) {
-        throw new Error('key doesn\'t follow extension')
+        throw new Error("key doesn't follow extension")
       }
       keys[i] = k.slice(extkey.length)
     }
@@ -258,7 +259,7 @@ async function _makeMultiproof(trie: Trie, rootHash: EmbeddedNode, keys: number[
     proof = {
       hashes: [],
       keyvals: [root.serialize()],
-      instructions: [{ kind: Opcode.Leaf, value: root.key.length }]
+      instructions: [{ kind: Opcode.Leaf, value: root.key.length }],
     }
   } else {
     throw new Error('Unexpected node type')
@@ -277,7 +278,7 @@ export function decodeMultiproof(raw: Buffer): Multiproof {
     // @ts-ignore
     keyvals: dec[1],
     // @ts-ignore
-    instructions: decodeInstructions(dec[2])
+    instructions: decodeInstructions(dec[2]),
   }
 }
 
@@ -296,7 +297,7 @@ export function decodeInstructions(instructions: Buffer[][]) {
         break
       case Opcode.Extension:
         // @ts-ignore
-        res.push({ kind: Opcode.Extension, value: op[1].map((v) => bufToU8(v)) })
+        res.push({ kind: Opcode.Extension, value: op[1].map(v => bufToU8(v)) })
         break
       case Opcode.Add:
         res.push({ kind: Opcode.Add, value: bufToU8(op[1]) })
