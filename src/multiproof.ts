@@ -146,15 +146,12 @@ function hashTrie(node: any): Buffer {
 }
 
 export async function makeMultiproof(trie: Trie, keys: Buffer[]): Promise<Multiproof> {
-  const proof: Multiproof = {
-    hashes: [],
-    keyvals: [],
-    instructions: [],
-  }
-
   if (keys.length === 0) {
-    // TODO: should add root as hash?
-    return proof
+    return {
+      hashes: [trie.root],
+      keyvals: [],
+      instructions: [{ kind: Opcode.Hasher, value: 0 }]
+    }
   }
 
   const keysNibbles = []
@@ -222,6 +219,9 @@ async function _makeMultiproof(
         }
       } else {
         const child = root.getBranch(i) as Buffer
+        if (!child) {
+          throw new Error('Key not in trie')
+        }
         const p = await _makeMultiproof(trie, child, table[i])
         proof.hashes.push(...p.hashes)
         proof.keyvals.push(...p.keyvals)
@@ -242,7 +242,8 @@ async function _makeMultiproof(
     for (let i = 0; i < keys.length; i++) {
       const k = keys[i]
       if (matchingNibbleLength(k, extkey) !== extkey.length) {
-        throw new Error("key doesn't follow extension")
+        // TODO: Maybe allow proving non-existent keys
+        throw new Error('Key not in trie')
       }
       keys[i] = k.slice(extkey.length)
     }
