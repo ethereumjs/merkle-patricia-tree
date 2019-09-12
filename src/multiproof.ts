@@ -150,7 +150,7 @@ export async function makeMultiproof(trie: Trie, keys: Buffer[]): Promise<Multip
     return {
       hashes: [trie.root],
       keyvals: [],
-      instructions: [{ kind: Opcode.Hasher, value: 0 }]
+      instructions: [{ kind: Opcode.Hasher, value: 0 }],
     }
   }
 
