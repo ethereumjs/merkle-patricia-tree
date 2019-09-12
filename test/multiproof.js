@@ -1,8 +1,10 @@
 const tape = require('tape')
 const promisify = require('util.promisify')
 const rlp = require('rlp')
+const { keccak256 } = require('ethereumjs-util')
 const { decodeMultiproof, decodeInstructions, verifyMultiproof, makeMultiproof, Instruction, Opcode } = require('../dist/multiproof')
 const { Trie } = require('../dist/baseTrie')
+const { SecureTrie } = require('../dist/secure')
 const { LeafNode } = require('../dist/trieNode')
 const { stringToNibbles } = require('../dist/util/nibbles')
 
@@ -153,28 +155,92 @@ tape('make multiproof', (t) => {
   })
 })
 
-tape('multiproof generation/verification with official jeff tests', async (t) => {
-  const jsonTest = require('./fixture/trietest.json').tests.jeff
-  const inputs = jsonTest.in
-  const expect = jsonTest.root
+tape('fuzz multiproof generation/verification with official tests', async (t) => {
+  const trietest = require('./fixture/trietest.json').tests
+  const trietestSecure = require('./fixture/trietest_secureTrie.json').tests
+  const hexEncodedTests = require('./fixture/hex_encoded_securetrie_test.json').tests
+  // Inputs of hex encoded tests are objects instead of arrays
+  Object.keys(hexEncodedTests).map((k) => {
+    hexEncodedTests[k].in = Object.keys(hexEncodedTests[k].in).map((key) => [key, hexEncodedTests[k].in[key]])
+  })
+  const testCases = [
+    { name: 'jeff', secure: false, input: trietest.jeff.in, root: trietest.jeff.root },
+    { name: 'jeffSecure', secure: true, input: trietestSecure.jeff.in, root: trietestSecure.jeff.root },
+    { name: 'test1', secure: true, input: hexEncodedTests.test1.in, root: hexEncodedTests.test1.root },
+    { name: 'test2', secure: true, input: hexEncodedTests.test2.in, root: hexEncodedTests.test2.root },
+    { name: 'test3', secure: true, input: hexEncodedTests.test3.in, root: hexEncodedTests.test3.root }
+  ]
+  for (const testCase of testCases) {
+    const testName = testCase.name
+    t.comment(testName)
+    const expect = Buffer.from(testCase.root.slice(2), 'hex')
+    // Clean inputs
+    let inputs = testCase.input.map((input) => {
+      for (i = 0; i < 2; i++) {
+        if (!input[i]) continue
+        if (input[i].slice(0, 2) === '0x') {
+          input[i] = Buffer.from(input[i].slice(2), 'hex')
+        } else {
+          input[i] = Buffer.from(input[i])
+        }
+      }
+      return input
+    })
 
-  const trie = new Trie()
-  for (let input of inputs) {
-    for (i = 0; i < 2; i++) {
-      if (input[i] && input[i].slice(0, 2) === '0x') {
-        input[i] = Buffer.from(input[i].slice(2), 'hex')
+    let trie
+    if (testCase.secure) {
+      trie = new SecureTrie()
+    } else {
+      trie = new Trie()
+    }
+    for (let input of inputs) {
+      await promisify(trie.put.bind(trie))(input[0], input[1])
+    }
+    t.assert(trie.root.equals(expect))
+
+    const keyCombinations = getCombinations(inputs.map((i) => i[0]))
+    for (let combination of keyCombinations) {
+      // If using secure make sure to hash keys
+      if (testCase.secure) {
+        combination = combination.map((k) => keccak256(k))
+      }
+      try {
+        const proof = await makeMultiproof(trie, combination)
+        t.assert(verifyMultiproof(trie.root, proof))
+      } catch (e) {
+        if (e.message !== 'Key not in trie') {
+          t.fail(e)
+        }
+        t.comment('skipped combination because key is not in trie')
       }
     }
-    await promisify(trie.put.bind(trie))(Buffer.from(input[0]), input[1])
   }
-  t.assert(trie.root.equals(Buffer.from(expect.slice(2), 'hex')))
-
-  const keys = [
-    Buffer.from('000000000000000000000000ec4f34c97e43fbb2816cfd95e388353c7181dab1', 'hex'),
-    Buffer.from('000000000000000000000000697c7b8c961b56f675d570498424ac8de1a918f6', 'hex'),
-    Buffer.from('0000000000000000000000000000000000000000000000000000000000000046', 'hex')
-  ]
-  const proof = await makeMultiproof(trie, keys)
-  t.assert(verifyMultiproof(trie.root, proof))
   t.end()
 })
+
+// Given array [a, b, c], produce combinations
+// with all lengths [1, arr.length]:
+// [[a], [b], [c], [a, b], [a, c], [b, c], [a, b, c]]
+function getCombinations(arr) {
+  // Make sure there are no duplicates
+  for (let i = 0; i < arr.length; i++) {
+    for (let j = i + 1; j < arr.length; j++) {
+      if (arr[i].equals(arr[j])) {
+        arr.splice(j, 1)
+      }
+    }
+  }
+
+  const res = []
+  const numCombinations = Math.pow(2, arr.length)
+  for (let i = 0; i < numCombinations; i++) {
+    const tmp = []
+    for (let j = 0; j < arr.length; j++) {
+      if ((i & Math.pow(2, j))) {
+        tmp.push(arr[j])
+      }
+    }
+    res.push(tmp)
+  }
+  return res
+}
