@@ -156,9 +156,9 @@ tape('make multiproof', (t) => {
 })
 
 tape('fuzz multiproof generation/verification with official tests', async (t) => {
-  const trietest = require('./fixture/trietest.json').tests
-  const trietestSecure = require('./fixture/trietest_secureTrie.json').tests
-  const hexEncodedTests = require('./fixture/hex_encoded_securetrie_test.json').tests
+  const trietest = Object.assign({}, require('./fixture/trietest.json').tests)
+  const trietestSecure = Object.assign({}, require('./fixture/trietest_secureTrie.json').tests)
+  const hexEncodedTests = Object.assign({}, require('./fixture/hex_encoded_securetrie_test.json').tests)
   // Inputs of hex encoded tests are objects instead of arrays
   Object.keys(hexEncodedTests).map((k) => {
     hexEncodedTests[k].in = Object.keys(hexEncodedTests[k].in).map((key) => [key, hexEncodedTests[k].in[key]])
@@ -176,15 +176,16 @@ tape('fuzz multiproof generation/verification with official tests', async (t) =>
     const expect = Buffer.from(testCase.root.slice(2), 'hex')
     // Clean inputs
     let inputs = testCase.input.map((input) => {
+      const res = [null, null]
       for (i = 0; i < 2; i++) {
         if (!input[i]) continue
         if (input[i].slice(0, 2) === '0x') {
-          input[i] = Buffer.from(input[i].slice(2), 'hex')
+          res[i] = Buffer.from(input[i].slice(2), 'hex')
         } else {
-          input[i] = Buffer.from(input[i])
+          res[i] = Buffer.from(input[i])
         }
       }
-      return input
+      return res
     })
 
     let trie
