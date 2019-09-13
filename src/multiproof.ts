@@ -256,6 +256,9 @@ async function _makeMultiproof(
     if (keys.length !== 1) {
       throw new Error('Expected 1 remaining key')
     }
+    if (matchingNibbleLength(keys[0], root.key) !== root.key.length) {
+      throw new Error('Leaf key doesn\'t match target key')
+    }
     // TODO: Check key matches leaf's key
     proof = {
       hashes: [],

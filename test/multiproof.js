@@ -166,6 +166,7 @@ tape('fuzz multiproof generation/verification with official tests', async (t) =>
   const testCases = [
     { name: 'jeff', secure: false, input: trietest.jeff.in, root: trietest.jeff.root },
     { name: 'jeffSecure', secure: true, input: trietestSecure.jeff.in, root: trietestSecure.jeff.root },
+    { name: 'emptyValuesSecure', secure: true, input: trietestSecure.emptyValues.in, root: trietestSecure.emptyValues.root },
     { name: 'test1', secure: true, input: hexEncodedTests.test1.in, root: hexEncodedTests.test1.root },
     { name: 'test2', secure: true, input: hexEncodedTests.test2.in, root: hexEncodedTests.test2.root },
     { name: 'test3', secure: true, input: hexEncodedTests.test3.in, root: hexEncodedTests.test3.root }
@@ -174,6 +175,7 @@ tape('fuzz multiproof generation/verification with official tests', async (t) =>
     const testName = testCase.name
     t.comment(testName)
     const expect = Buffer.from(testCase.root.slice(2), 'hex')
+    const removedKeys = {}
     // Clean inputs
     let inputs = testCase.input.map((input) => {
       const res = [null, null]
@@ -184,6 +186,9 @@ tape('fuzz multiproof generation/verification with official tests', async (t) =>
         } else {
           res[i] = Buffer.from(input[i])
         }
+      }
+      if (res[1] === null) {
+        removedKeys[res[0].toString('hex')] = true
       }
       return res
     })
@@ -199,7 +204,10 @@ tape('fuzz multiproof generation/verification with official tests', async (t) =>
     }
     t.assert(trie.root.equals(expect))
 
-    const keyCombinations = getCombinations(inputs.map((i) => i[0]))
+    // TODO: include keys that have been removed from trie
+    const keyCombinations = getCombinations(
+      inputs.map((i) => i[0]).filter((i) => removedKeys[i.toString('hex')] !== true)
+    )
     for (let combination of keyCombinations) {
       // If using secure make sure to hash keys
       if (testCase.secure) {
