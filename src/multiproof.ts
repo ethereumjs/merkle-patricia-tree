@@ -58,9 +58,9 @@ export function verifyMultiproof(root: Buffer, proof: Multiproof, keys: Buffer[]
       // @ts-ignore
       //stack.push([NodeType.Leaf, [l[0].slice(l[0].length - instr.value), l[1]]])
       // Disregard leaf operand
-      stack.push([NodeType.Leaf, [l[0], l[1]], [leafIdx-1]])
+      stack.push([NodeType.Leaf, [l[0], l[1]], [leafIdx - 1]])
       // @ts-ignore
-      paths[leafIdx-1] = removeHexPrefix(stringToNibbles(l[0]))
+      paths[leafIdx - 1] = removeHexPrefix(stringToNibbles(l[0]))
     } else if (instr.kind === Opcode.Branch) {
       const n = stack.pop()
       if (!n) {
@@ -79,7 +79,7 @@ export function verifyMultiproof(root: Buffer, proof: Multiproof, keys: Buffer[]
       }
       stack.push([NodeType.Extension, [instr.value, n], n[2].slice()])
       for (let i = 0; i < n[2].length; i++) {
-        paths[n[2][i]] = [...instr.value as number[], ...paths[n[2][i]]]
+        paths[n[2][i]] = [...(instr.value as number[]), ...paths[n[2][i]]]
       }
     } else if (instr.kind === Opcode.Add) {
       const n1 = stack.pop()
