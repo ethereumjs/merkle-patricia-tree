@@ -4,7 +4,7 @@ import { keccak256 } from 'ethereumjs-util'
 import { Trie } from './baseTrie'
 import { BranchNode, ExtensionNode, LeafNode, EmbeddedNode, decodeRawNode } from './trieNode'
 import { stringToNibbles, nibblesToBuffer, matchingNibbleLength } from './util/nibbles'
-import { addHexPrefix } from './util/hex'
+import { addHexPrefix, removeHexPrefix } from './util/hex'
 const promisify = require('util.promisify')
 
 export enum Opcode {
@@ -33,12 +33,14 @@ export interface Multiproof {
   instructions: Instruction[]
 }
 
-export function verifyMultiproof(root: Buffer, proof: Multiproof): boolean {
+export function verifyMultiproof(root: Buffer, proof: Multiproof, keys: Buffer[]): boolean {
   const stack: any[] = []
 
   const leaves = proof.keyvals.map((l: Buffer) => decode(l))
+  assert(leaves.length === keys.length)
   let leafIdx = 0
   let hashIdx = 0
+  const paths = new Array(leaves.length).fill(undefined)
 
   for (const instr of proof.instructions) {
     if (instr.kind === Opcode.Hasher) {
@@ -46,7 +48,7 @@ export function verifyMultiproof(root: Buffer, proof: Multiproof): boolean {
       if (!h) {
         throw new Error('Not enough hashes in multiproof')
       }
-      stack.push([NodeType.Hash, [h, instr.value as number]])
+      stack.push([NodeType.Hash, [h, instr.value as number], []])
     } else if (instr.kind === Opcode.Leaf) {
       const l = leaves[leafIdx++]
       if (!l) {
@@ -56,7 +58,9 @@ export function verifyMultiproof(root: Buffer, proof: Multiproof): boolean {
       // @ts-ignore
       //stack.push([NodeType.Leaf, [l[0].slice(l[0].length - instr.value), l[1]]])
       // Disregard leaf operand
-      stack.push([NodeType.Leaf, [l[0], l[1]]])
+      stack.push([NodeType.Leaf, [l[0], l[1]], [leafIdx-1]])
+      // @ts-ignore
+      paths[leafIdx-1] = removeHexPrefix(stringToNibbles(l[0]))
     } else if (instr.kind === Opcode.Branch) {
       const n = stack.pop()
       if (!n) {
@@ -64,13 +68,19 @@ export function verifyMultiproof(root: Buffer, proof: Multiproof): boolean {
       }
       const children = new Array(16).fill(null)
       children[instr.value as number] = n
-      stack.push([NodeType.Branch, children])
+      stack.push([NodeType.Branch, children, n[2].slice()])
+      for (let i = 0; i < n[2].length; i++) {
+        paths[n[2][i]] = [instr.value as number, ...paths[n[2][i]]]
+      }
     } else if (instr.kind === Opcode.Extension) {
       const n = stack.pop()
       if (!n) {
         throw new Error('Stack underflow')
       }
-      stack.push([NodeType.Extension, [instr.value, n]])
+      stack.push([NodeType.Extension, [instr.value, n], n[2].slice()])
+      for (let i = 0; i < n[2].length; i++) {
+        paths[n[2][i]] = [...instr.value as number[], ...paths[n[2][i]]]
+      }
     } else if (instr.kind === Opcode.Add) {
       const n1 = stack.pop()
       const n2 = stack.pop()
@@ -80,7 +90,11 @@ export function verifyMultiproof(root: Buffer, proof: Multiproof): boolean {
       assert(n2[0] === NodeType.Branch, 'expected branch node on stack')
       assert(instr.value < 17)
       n2[1][instr.value as number] = n1
+      n2[2] = Array.from(new Set([...n1[2], ...n2[2]]))
       stack.push(n2)
+      for (let i = 0; i < n1[2].length; i++) {
+        paths[n1[2][i]] = [instr.value as number, ...paths[n1[2][i]]]
+      }
     } else {
       throw new Error('Invalid opcode')
     }
@@ -95,6 +109,12 @@ export function verifyMultiproof(root: Buffer, proof: Multiproof): boolean {
   // and that leaf has length < 32
   if (h.length < 32) {
     h = keccak256(encode(h))
+  }
+
+  // Assuming sorted keys
+  for (let i = 0; i < paths.length; i++) {
+    const addr = nibblesToBuffer(paths[i])
+    assert(addr.equals(keys[i]))
   }
   return h.equals(root)
 }

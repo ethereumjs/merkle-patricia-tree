@@ -87,7 +87,7 @@ tape('make multiproof', (t) => {
       keyvals: [leaf.serialize()],
       instructions: [{ kind: Opcode.Leaf, value: 40 }]
     })
-    st.assert(verifyMultiproof(t.root, proof))
+    st.assert(verifyMultiproof(t.root, proof, [key]))
     st.end()
   })
 
@@ -104,7 +104,7 @@ tape('make multiproof', (t) => {
     st.equal(proof.hashes.length, 1)
     st.equal(proof.keyvals.length, 1)
     st.equal(proof.instructions.length, 4)
-    st.assert(verifyMultiproof(t.root, proof))
+    st.assert(verifyMultiproof(t.root, proof, [key1]))
     st.end()
   })
 
@@ -120,7 +120,7 @@ tape('make multiproof', (t) => {
     await put(key3, Buffer.from('d'.repeat(64), 'hex'))
 
     const proof = await makeMultiproof(t, [key3, key1])
-    st.assert(verifyMultiproof(t.root, proof))
+    st.assert(verifyMultiproof(t.root, proof, [key1, key3]))
     st.end()
   })
 
@@ -135,8 +135,10 @@ tape('make multiproof', (t) => {
     await put(key2, Buffer.from('e'.repeat(64), 'hex'))
     await put(key3, Buffer.from('d'.repeat(64), 'hex'))
 
-    const proof = await makeMultiproof(t, [key3, key1])
-    st.assert(verifyMultiproof(t.root, proof))
+    const keys = [key3, key1]
+    const proof = await makeMultiproof(t, keys)
+    keys.sort(Buffer.compare)
+    st.assert(verifyMultiproof(t.root, proof, keys))
     st.end()
   })
 
@@ -150,7 +152,7 @@ tape('make multiproof', (t) => {
     await put(key2, Buffer.from('e'.repeat(4), 'hex'))
 
     const proof = await makeMultiproof(t, [key1])
-    st.assert(verifyMultiproof(t.root, proof))
+    st.assert(verifyMultiproof(t.root, proof, [key1]))
     st.end()
   })
 })
@@ -215,7 +217,9 @@ tape('fuzz multiproof generation/verification with official tests', async (t) =>
       }
       try {
         const proof = await makeMultiproof(trie, combination)
-        t.assert(verifyMultiproof(trie.root, proof))
+        // Verification expects a sorted array of keys
+        combination.sort(Buffer.compare)
+        t.assert(verifyMultiproof(trie.root, proof, combination))
       } catch (e) {
         if (e.message !== 'Key not in trie') {
           t.fail(e)
