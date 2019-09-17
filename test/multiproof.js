@@ -2,7 +2,7 @@ const tape = require('tape')
 const promisify = require('util.promisify')
 const rlp = require('rlp')
 const { keccak256 } = require('ethereumjs-util')
-const { decodeMultiproof, decodeInstructions, verifyMultiproof, makeMultiproof, Instruction, Opcode } = require('../dist/multiproof')
+const { decodeMultiproof, encodeMultiproof, decodeInstructions, verifyMultiproof, makeMultiproof, Instruction, Opcode } = require('../dist/multiproof')
 const { Trie } = require('../dist/baseTrie')
 const { SecureTrie } = require('../dist/secure')
 const { LeafNode } = require('../dist/trieNode')
@@ -21,17 +21,41 @@ tape('decode instructions', (t) => {
   t.end()
 })
 
-tape('decode multiproof', (t) => {
-  const raw = Buffer.from('ebe1a00101010101010101010101010101010101010101010101010101010101010101c483c20102c3c20280', 'hex')
-  const expected = {
-    hashes: [Buffer.alloc(32, 1)],
-    instructions: [{ kind: Opcode.Leaf, value: 0 }],
-    keyvals: [Buffer.from('c20102', 'hex')]
-  }
-  const proof = decodeMultiproof(raw)
-  t.deepEqual(expected, proof) 
+tape('decode and encode multiproof', (t) => {
+  t.test('decode and encode one leaf', (st) => {
+    const raw = Buffer.from('ebe1a00101010101010101010101010101010101010101010101010101010101010101c483c20102c3c20280', 'hex')
+    const expected = {
+      hashes: [Buffer.alloc(32, 1)],
+      instructions: [{ kind: Opcode.Leaf, value: 0 }],
+      keyvals: [Buffer.from('c20102', 'hex')]
+    }
+    const proof = decodeMultiproof(raw)
+    st.deepEqual(expected, proof)
 
-  t.end()
+    const encoded = encodeMultiproof(expected)
+    st.assert(raw.equals(encoded))
+
+    st.end()
+  })
+
+  t.test('decode and encode two out of three leaves with extension', async (st) => {
+    const t = new Trie()
+    const put = promisify(t.put.bind(t))
+    const lookupNode = promisify(t._lookupNode.bind(t))
+    const key1 = Buffer.from('1'.repeat(40), 'hex')
+    const key2 = Buffer.from('2'.repeat(40), 'hex')
+    const key3 = Buffer.from('1'.repeat(10).concat('3'.repeat(30)), 'hex')
+    await put(key1, Buffer.from('f'.repeat(64), 'hex'))
+    await put(key2, Buffer.from('e'.repeat(64), 'hex'))
+    await put(key3, Buffer.from('d'.repeat(64), 'hex'))
+
+    const keys = [key3, key1]
+    const proof = await makeMultiproof(t, keys)
+    const encoded = encodeMultiproof(proof)
+    const decoded = decodeMultiproof(encoded)
+    st.deepEqual(proof, decoded)
+    st.end()
+  })
 })
 
 tape('multiproof tests', (t) => {

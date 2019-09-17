@@ -306,6 +306,20 @@ export function decodeMultiproof(raw: Buffer): Multiproof {
   }
 }
 
+export function encodeMultiproof(proof: Multiproof): Buffer {
+  return encode(rawMultiproof(proof))
+}
+
+export function rawMultiproof(proof: Multiproof): any {
+  return [
+    proof.hashes,
+    proof.keyvals,
+    proof.instructions.map((i) => {
+      return [i.kind, i.value]
+    })
+  ]
+}
+
 export function decodeInstructions(instructions: Buffer[][]) {
   const res = []
   for (const op of instructions) {
