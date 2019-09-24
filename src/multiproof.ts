@@ -24,7 +24,7 @@ export enum NodeType {
 
 export interface Instruction {
   kind: Opcode
-  value: number | number[]
+  value?: number | number[]
 }
 
 export interface Multiproof {
@@ -48,7 +48,7 @@ export function verifyMultiproof(root: Buffer, proof: Multiproof, keys: Buffer[]
       if (!h) {
         throw new Error('Not enough hashes in multiproof')
       }
-      stack.push([NodeType.Hash, [h, instr.value as number], []])
+      stack.push([NodeType.Hash, [h], []])
     } else if (instr.kind === Opcode.Leaf) {
       const l = leaves[leafIdx++]
       if (!l) {
@@ -88,7 +88,7 @@ export function verifyMultiproof(root: Buffer, proof: Multiproof, keys: Buffer[]
         throw new Error('Stack underflow')
       }
       assert(n2[0] === NodeType.Branch, 'expected branch node on stack')
-      assert(instr.value < 17)
+      assert(instr.value as number < 17)
       n2[1][instr.value as number] = n1
       n2[2] = Array.from(new Set([...n1[2], ...n2[2]]))
       stack.push(n2)
@@ -170,7 +170,7 @@ export async function makeMultiproof(trie: Trie, keys: Buffer[]): Promise<Multip
     return {
       hashes: [trie.root],
       keyvals: [],
-      instructions: [{ kind: Opcode.Hasher, value: 0 }],
+      instructions: [{ kind: Opcode.Hasher }],
     }
   }
 
@@ -220,7 +220,7 @@ async function _makeMultiproof(
         // Empty subtree, hash it and add a HASHER op
         const child = root.getBranch(i)
         if (child) {
-          proof.instructions.push({ kind: Opcode.Hasher, value: 0 })
+          proof.instructions.push({ kind: Opcode.Hasher })
           // TODO: Make sure child is a hash
           // what to do if embedded?
           if (Buffer.isBuffer(child)) {
@@ -311,7 +311,10 @@ export function encodeMultiproof(proof: Multiproof): Buffer {
 }
 
 export function rawMultiproof(proof: Multiproof): any {
-  return [proof.hashes, proof.keyvals, proof.instructions.map(i => [i.kind, i.value])]
+  return [proof.hashes, proof.keyvals, proof.instructions.map(i => {
+    if (i.value !== undefined) return [i.kind, i.value]
+    return [i.kind]
+  })]
 }
 
 export function decodeInstructions(instructions: Buffer[][]) {
@@ -322,7 +325,7 @@ export function decodeInstructions(instructions: Buffer[][]) {
         res.push({ kind: Opcode.Branch, value: bufToU8(op[1]) })
         break
       case Opcode.Hasher:
-        res.push({ kind: Opcode.Hasher, value: bufToU8(op[1]) })
+        res.push({ kind: Opcode.Hasher })
         break
       case Opcode.Leaf:
         res.push({ kind: Opcode.Leaf, value: bufToU8(op[1]) })

@@ -2,7 +2,7 @@ const tape = require('tape')
 const promisify = require('util.promisify')
 const rlp = require('rlp')
 const { keccak256 } = require('ethereumjs-util')
-const { decodeMultiproof, encodeMultiproof, decodeInstructions, verifyMultiproof, makeMultiproof, Instruction, Opcode } = require('../dist/multiproof')
+const { decodeMultiproof, rawMultiproof, encodeMultiproof, decodeInstructions, verifyMultiproof, makeMultiproof, Instruction, Opcode } = require('../dist/multiproof')
 const { Trie } = require('../dist/baseTrie')
 const { SecureTrie } = require('../dist/secure')
 const { LeafNode } = require('../dist/trieNode')
@@ -33,6 +33,7 @@ tape('decode and encode multiproof', (t) => {
     st.deepEqual(expected, proof)
 
     const encoded = encodeMultiproof(expected)
+    console.log(encoded.toString('hex'))
     st.assert(raw.equals(encoded))
 
     st.end()
@@ -64,7 +65,7 @@ tape('multiproof tests', (t) => {
     const raw = Buffer.from('f876e1a01bbb8445ba6497d9a4642a114cb06b3a61ea8e49ca3853991b4f07b7e1e04892f845b843f8419f02020202020202020202020202020202020202020202020202020202020202a00000000000000000000000000000000000000000000000000000000000000000ccc20180c28001c2021fc20402', 'hex')
     const expectedRoot = Buffer.from('0d76455583723bb10c56d34cfad1fb218e692299ae2edb5dd56a950f7062a6e0', 'hex')
     const expectedInstructions = [
-      { kind: Opcode.Hasher, value: 0 },
+      { kind: Opcode.Hasher },
       { kind: Opcode.Branch, value: 1 },
       { kind: Opcode.Leaf, value: 31 },
       { kind: Opcode.Add, value: 2 },
@@ -84,7 +85,7 @@ tape('multiproof tests', (t) => {
       { kind: Opcode.Branch, value: 1 },
       { kind: Opcode.Leaf, value: 31 },
       { kind: Opcode.Add, value: 2 },
-      { kind: Opcode.Hasher, value: 0 },
+      { kind: Opcode.Hasher },
       { kind: Opcode.Add, value: 8 }
     ]
     const proof = decodeMultiproof(raw)
