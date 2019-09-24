@@ -88,7 +88,7 @@ export function verifyMultiproof(root: Buffer, proof: Multiproof, keys: Buffer[]
         throw new Error('Stack underflow')
       }
       assert(n2[0] === NodeType.Branch, 'expected branch node on stack')
-      assert(instr.value as number < 17)
+      assert((instr.value as number) < 17)
       n2[1][instr.value as number] = n1
       n2[2] = Array.from(new Set([...n1[2], ...n2[2]]))
       stack.push(n2)
@@ -314,10 +314,14 @@ export function rawMultiproof(proof: Multiproof, flatInstructions: boolean = fal
   if (flatInstructions) {
     return [proof.hashes, proof.keyvals, flatEncodeInstructions(proof.instructions)]
   } else {
-    return [proof.hashes, proof.keyvals, proof.instructions.map(i => {
-      if (i.value !== undefined) return [i.kind, i.value]
-      return [i.kind]
-    })]
+    return [
+      proof.hashes,
+      proof.keyvals,
+      proof.instructions.map(i => {
+        if (i.value !== undefined) return [i.kind, i.value]
+        return [i.kind]
+      }),
+    ]
   }
 }
 
