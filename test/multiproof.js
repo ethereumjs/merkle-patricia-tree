@@ -2,23 +2,44 @@ const tape = require('tape')
 const promisify = require('util.promisify')
 const rlp = require('rlp')
 const { keccak256 } = require('ethereumjs-util')
-const { decodeMultiproof, rawMultiproof, encodeMultiproof, decodeInstructions, verifyMultiproof, makeMultiproof, Instruction, Opcode } = require('../dist/multiproof')
 const { Trie } = require('../dist/baseTrie')
 const { SecureTrie } = require('../dist/secure')
 const { LeafNode } = require('../dist/trieNode')
 const { stringToNibbles } = require('../dist/util/nibbles')
+const {
+  decodeMultiproof, rawMultiproof, encodeMultiproof,
+  decodeInstructions, flatEncodeInstructions, flatDecodeInstructions,
+  verifyMultiproof, makeMultiproof, Instruction, Opcode
+} = require('../dist/multiproof')
 
-tape('decode instructions', (t) => {
-  const raw = Buffer.from('d0c20201c20405c603c403030303c28006', 'hex')
-  const expected = [
-    { kind: Opcode.Leaf },
-    { kind: Opcode.Add, value: 5 },
-    { kind: Opcode.Extension, value: [3, 3, 3, 3] },
-    { kind: Opcode.Branch, value: 6 }
-  ]
-  const res = decodeInstructions(rlp.decode(raw))
-  t.deepEqual(expected, res)
-  t.end()
+tape('decode and encode instructions', (t) => {
+  t.test('rlp encoding', (st) => {
+    const raw = Buffer.from('d0c20201c20405c603c403030303c28006', 'hex')
+    const expected = [
+      { kind: Opcode.Leaf },
+      { kind: Opcode.Add, value: 5 },
+      { kind: Opcode.Extension, value: [3, 3, 3, 3] },
+      { kind: Opcode.Branch, value: 6 }
+    ]
+    const res = decodeInstructions(rlp.decode(raw))
+    st.deepEqual(expected, res)
+    st.end()
+  })
+
+  t.test('flat encoding', (st) => {
+    const raw = Buffer.from('0204050304030303030006', 'hex')
+    const instructions = [
+      { kind: Opcode.Leaf },
+      { kind: Opcode.Add, value: 5 },
+      { kind: Opcode.Extension, value: [3, 3, 3, 3] },
+      { kind: Opcode.Branch, value: 6 }
+    ]
+    const encoded = flatEncodeInstructions(instructions)
+    st.assert(raw.equals(encoded))
+    const decoded = flatDecodeInstructions(raw)
+    st.deepEqual(instructions, decoded)
+    st.end()
+  })
 })
 
 tape('decode and encode multiproof', (t) => {

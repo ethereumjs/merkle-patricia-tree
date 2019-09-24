@@ -306,15 +306,65 @@ export function decodeMultiproof(raw: Buffer): Multiproof {
   }
 }
 
-export function encodeMultiproof(proof: Multiproof): Buffer {
-  return encode(rawMultiproof(proof))
+export function encodeMultiproof(proof: Multiproof, flatInstructions: boolean = false): Buffer {
+  return encode(rawMultiproof(proof, flatInstructions))
 }
 
-export function rawMultiproof(proof: Multiproof): any {
-  return [proof.hashes, proof.keyvals, proof.instructions.map(i => {
-    if (i.value !== undefined) return [i.kind, i.value]
-    return [i.kind]
-  })]
+export function rawMultiproof(proof: Multiproof, flatInstructions: boolean = false): any {
+  if (flatInstructions) {
+    return [proof.hashes, proof.keyvals, flatEncodeInstructions(proof.instructions)]
+  } else {
+    return [proof.hashes, proof.keyvals, proof.instructions.map(i => {
+      if (i.value !== undefined) return [i.kind, i.value]
+      return [i.kind]
+    })]
+  }
+}
+
+export function flatEncodeInstructions(instructions: Instruction[]): Buffer {
+  const res: number[] = []
+  for (const instr of instructions) {
+    res.push(instr.kind)
+    if (instr.kind === Opcode.Branch || instr.kind === Opcode.Add) {
+      res.push(instr.value as number)
+    } else if (instr.kind === Opcode.Extension) {
+      const nibbles = instr.value as number[]
+      res.push(nibbles.length)
+      res.push(...nibbles)
+    }
+  }
+  return Buffer.from(new Uint8Array(res))
+}
+
+export function flatDecodeInstructions(raw: Buffer): Instruction[] {
+  const res = []
+  let i = 0
+  while (i < raw.length) {
+    const op = raw[i++]
+    switch (op) {
+      case Opcode.Branch:
+        res.push({ kind: Opcode.Branch, value: raw[i++] })
+        break
+      case Opcode.Hasher:
+        res.push({ kind: Opcode.Hasher })
+        break
+      case Opcode.Leaf:
+        res.push({ kind: Opcode.Leaf })
+        break
+      case Opcode.Extension:
+        const length = raw.readUInt8(i++)
+        const nibbles = []
+        for (let j = 0; j < length; j++) {
+          nibbles.push(raw[i++])
+        }
+        res.push({ kind: Opcode.Extension, value: nibbles })
+        break
+      case Opcode.Add:
+        res.push({ kind: Opcode.Add, value: raw[i++] })
+        break
+    }
+  }
+  return res
 }
 
 export function decodeInstructions(instructions: Buffer[][]) {
