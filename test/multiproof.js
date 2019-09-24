@@ -11,7 +11,7 @@ const { stringToNibbles } = require('../dist/util/nibbles')
 tape('decode instructions', (t) => {
   const raw = Buffer.from('d0c20201c20405c603c403030303c28006', 'hex')
   const expected = [
-    { kind: Opcode.Leaf, value: 1 },
+    { kind: Opcode.Leaf },
     { kind: Opcode.Add, value: 5 },
     { kind: Opcode.Extension, value: [3, 3, 3, 3] },
     { kind: Opcode.Branch, value: 6 }
@@ -23,17 +23,16 @@ tape('decode instructions', (t) => {
 
 tape('decode and encode multiproof', (t) => {
   t.test('decode and encode one leaf', (st) => {
-    const raw = Buffer.from('ebe1a00101010101010101010101010101010101010101010101010101010101010101c483c20102c3c20280', 'hex')
+    const raw = Buffer.from('eae1a00101010101010101010101010101010101010101010101010101010101010101c483c20102c2c102', 'hex')
     const expected = {
       hashes: [Buffer.alloc(32, 1)],
-      instructions: [{ kind: Opcode.Leaf, value: 0 }],
+      instructions: [{ kind: Opcode.Leaf }],
       keyvals: [Buffer.from('c20102', 'hex')]
     }
     const proof = decodeMultiproof(raw)
     st.deepEqual(expected, proof)
 
     const encoded = encodeMultiproof(expected)
-    console.log(encoded.toString('hex'))
     st.assert(raw.equals(encoded))
 
     st.end()
@@ -67,7 +66,7 @@ tape('multiproof tests', (t) => {
     const expectedInstructions = [
       { kind: Opcode.Hasher },
       { kind: Opcode.Branch, value: 1 },
-      { kind: Opcode.Leaf, value: 31 },
+      { kind: Opcode.Leaf },
       { kind: Opcode.Add, value: 2 },
     ]
     const proof = decodeMultiproof(raw)
@@ -81,9 +80,9 @@ tape('multiproof tests', (t) => {
     const raw = Buffer.from('f8c1e1a09afbad9ae00ded5a066bd6f0ec67a45d51f31c258066b997e9bb8336bc13eba8f88ab843f8419f01010101010101010101010101010101010101010101010101010101010101a00101010101010101010101010101010101010101010101010101010101010101b843f8419f02020202020202020202020202020202020202020202020202020202020202a00000000000000000000000000000000000000000000000000000000000000000d2c2021fc28001c2021fc20402c20180c20408', 'hex')
     const expectedRoot = Buffer.from('32291409ceb27a3b68b6beff58cfc41c084c0bde9e6aca03a20ce9aa795bb248', 'hex')
     const expectedInstructions = [
-      { kind: Opcode.Leaf, value: 31 },
+      { kind: Opcode.Leaf },
       { kind: Opcode.Branch, value: 1 },
-      { kind: Opcode.Leaf, value: 31 },
+      { kind: Opcode.Leaf },
       { kind: Opcode.Add, value: 2 },
       { kind: Opcode.Hasher },
       { kind: Opcode.Add, value: 8 }
@@ -110,7 +109,7 @@ tape('make multiproof', (t) => {
     st.deepEqual(proof, {
       hashes: [],
       keyvals: [leaf.serialize()],
-      instructions: [{ kind: Opcode.Leaf, value: 40 }]
+      instructions: [{ kind: Opcode.Leaf }]
     })
     st.assert(verifyMultiproof(t.root, proof, [key]))
     st.end()

@@ -283,7 +283,7 @@ async function _makeMultiproof(
     proof = {
       hashes: [],
       keyvals: [root.serialize()],
-      instructions: [{ kind: Opcode.Leaf, value: root.key.length }],
+      instructions: [{ kind: Opcode.Leaf }],
     }
   } else {
     throw new Error('Unexpected node type')
@@ -328,7 +328,7 @@ export function decodeInstructions(instructions: Buffer[][]) {
         res.push({ kind: Opcode.Hasher })
         break
       case Opcode.Leaf:
-        res.push({ kind: Opcode.Leaf, value: bufToU8(op[1]) })
+        res.push({ kind: Opcode.Leaf })
         break
       case Opcode.Extension:
         // @ts-ignore
