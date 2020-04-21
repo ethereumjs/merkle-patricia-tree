@@ -6,27 +6,27 @@ tape('SecureTrie', function (t) {
   const k = Buffer.from('foo')
   const v = Buffer.from('bar')
 
-  t.test('put and get value', async function (st) {
-    await trie.put(k, v)
-    const res = await trie.get(k)
+  t.test('put and get value', function (st) {
+    trie.put(k, v)
+    const res = trie.get(k)
     st.ok(v.equals(res!))
     st.end()
   })
 
-  t.test('copy trie', async function (st) {
+  t.test('copy trie', function (st) {
     const t = trie.copy()
-    const res = await t.get(k)
+    const res = t.get(k)
     st.ok(v.equals(res!))
     st.end()
   })
 
   tape('SecureTrie proof', function (t) {
-    t.test('create a merkle proof and verify it with a single short key', async function (st) {
+    t.test('create a merkle proof and verify it with a single short key', function (st) {
       const trie = new SecureTrie()
-      await trie.put(Buffer.from('key1aa'), Buffer.from('01234'))
+      trie.put(Buffer.from('key1aa'), Buffer.from('01234'))
 
-      const proof = await SecureTrie.prove(trie, Buffer.from('key1aa'))
-      const val = await SecureTrie.verifyProof(trie.root, Buffer.from('key1aa'), proof)
+      const proof = SecureTrie.prove(trie, Buffer.from('key1aa'))
+      const val = SecureTrie.verifyProof(trie.root, Buffer.from('key1aa'), proof)
       st.equal(val!.toString('utf8'), '01234')
       st.end()
     })
@@ -36,32 +36,32 @@ tape('SecureTrie', function (t) {
     let trie = new SecureTrie()
     const jsonTests = require('./fixtures/trietest_secureTrie.json').tests
 
-    it.test('empty values', async function (t) {
-      for await (const row of jsonTests.emptyValues.in) {
+    it.test('empty values', function (t) {
+      for (const row of jsonTests.emptyValues.in) {
         const val = row[1] ? Buffer.from(row[1]) : ((null as unknown) as Buffer)
-        await trie.put(Buffer.from(row[0]), val)
+        trie.put(Buffer.from(row[0]), val)
       }
       t.equal('0x' + trie.root.toString('hex'), jsonTests.emptyValues.root)
       t.end()
     })
 
-    it.test('branchingTests', async function (t) {
+    it.test('branchingTests', function (t) {
       trie = new SecureTrie()
-      for await (const row of jsonTests.branchingTests.in) {
+      for (const row of jsonTests.branchingTests.in) {
         const val = row[1] ? Buffer.from(row[1]) : ((null as unknown) as Buffer)
-        await trie.put(Buffer.from(row[0]), val)
+        trie.put(Buffer.from(row[0]), val)
       }
       t.equal('0x' + trie.root.toString('hex'), jsonTests.branchingTests.root)
       t.end()
     })
 
-    it.test('jeff', async function (t) {
-      for await (const row of jsonTests.jeff.in) {
+    it.test('jeff', function (t) {
+      for (const row of jsonTests.jeff.in) {
         let val = row[1]
         if (val) {
           val = Buffer.from(row[1].slice(2), 'hex')
         }
-        await trie.put(Buffer.from(row[0].slice(2), 'hex'), val)
+        trie.put(Buffer.from(row[0].slice(2), 'hex'), val)
       }
       t.equal('0x' + trie.root.toString('hex'), jsonTests.jeff.root.toString('hex'))
       t.end()
@@ -110,17 +110,17 @@ const g = Buffer.from(
 )
 const gk = Buffer.from('095e7baea6a6c7c4c2dfeb977efac326af552d87', 'hex')
 
-tape('secure tests should not crash', async function (t) {
-  await trie.put(ak, a)
-  await trie.put(bk, b)
-  await trie.put(ck, c)
+tape('secure tests should not crash', function (t) {
+  trie.put(ak, a)
+  trie.put(bk, b)
+  trie.put(ck, c)
   trie.checkpoint()
   trie.checkpoint()
-  await trie.commit()
-  await trie.put(dk, d)
-  await trie.put(ek, e)
-  await trie.put(fk, f)
-  await trie.commit()
-  await trie.put(gk, g)
+  trie.commit()
+  trie.put(dk, d)
+  trie.put(ek, e)
+  trie.put(fk, f)
+  trie.commit()
+  trie.put(gk, g)
   t.end()
 })

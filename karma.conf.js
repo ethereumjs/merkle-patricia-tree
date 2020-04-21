@@ -12,6 +12,7 @@ module.exports = function (config) {
       },
     },
     colors: true,
+    reporters: ['dots', 'karma-typescript'],
     browsers: ['FirefoxHeadless', 'ChromeHeadless'],
     singleRun: true,
     concurrency: Infinity,

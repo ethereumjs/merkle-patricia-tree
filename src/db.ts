@@ -1,7 +1,6 @@
 import { LevelUp } from 'levelup'
-const level = require('level-mem')
 
-export const ENCODING_OPTS = { keyEncoding: 'binary', valueEncoding: 'binary' }
+export type DBMap = Map<String, Buffer>
 
 export type BatchDBOp = PutBatch | DelBatch
 export interface PutBatch {
@@ -14,50 +13,57 @@ export interface DelBatch {
   key: Buffer
 }
 
+/** Options to be passed in the constructor of a new DB */
+export interface DBOptions {
+  /** The db may be initialized with an existing JavaScript map. **/
+  map?: Map<String, Buffer>
+  /** The db may be initialized with an abstract-leveldown compliant store. **/
+  leveldb?: LevelUp
+}
+
 /**
- * DB is a thin wrapper around the underlying levelup db,
- * which validates inputs and sets encoding type.
+ * DB is a thin wrapper around JavaScript's map data structure.
  */
 export class DB {
-  _leveldb: LevelUp
+  _map: DBMap
 
   /**
-   * Initialize a DB instance. If `leveldb` is not provided, DB
-   * defaults to an [in-memory store](https://github.com/Level/memdown).
-   * @param {Object} [leveldb] - An abstract-leveldown compliant store
+   * Initialize a DB instance with [[DBOptions]].
+   * If `leveldb` is not provided, db defaults to an in-memory JavaScript map.
    */
-  constructor(leveldb?: LevelUp) {
-    this._leveldb = leveldb || level()
-  }
-
-  /**
-   * Retrieves a raw value from leveldb.
-   * @param {Buffer} key
-   * @returns {Promise} - Promise resolves with `Buffer` if a value is found or `null` if no value is found.
-   */
-  async get(key: Buffer): Promise<Buffer | null> {
-    let value = null
-    try {
-      value = await this._leveldb.get(key, ENCODING_OPTS)
-    } catch (error) {
-      if (error.notFound) {
-        // not found, returning null
-      } else {
-        throw error
-      }
-    } finally {
-      return value
+  constructor(options?: DBOptions) {
+    if (options?.map) {
+      this._map = options.map
+    } else if (options?.leveldb) {
+      this._map = new Map()
+      // TODO one idea to resolve this async init race condition: create a public API method for _leveldbToMap and expect the result of that to be passed into `Trie(db)`.
+      this._leveldbToMap(options.leveldb).then((dbMap) => {
+        this._map = dbMap
+      })
+    } else {
+      this._map = new Map()
     }
   }
 
   /**
-   * Writes a value directly to leveldb.
-   * @param {Buffer} key The key as a `Buffer`
-   * @param {Buffer} value The value to be stored
-   * @returns {Promise}
+   * Retrieves a raw value from db.
+   * @param {Buffer} key
+   * @returns {Buffer | null} - Returns with `Buffer` if a value is found or `null` if no value is found.
    */
-  async put(key: Buffer, val: Buffer): Promise<void> {
-    await this._leveldb.put(key, val, ENCODING_OPTS)
+  get(key: Buffer): Buffer | null {
+    const formattedKey = key.toString('hex')
+    const value = this._map.get(formattedKey)
+    return value || null
+  }
+
+  /**
+   * Writes a value to db.
+   * @param {Buffer} key - The key to be stored
+   * @param {Buffer} value - The value to be stored
+   */
+  put(key: Buffer, value: Buffer) {
+    const formattedKey = key.toString('hex')
+    this._map.set(formattedKey, value)
   }
 
   /**
@@ -65,24 +71,54 @@ export class DB {
    * @param {Buffer} key
    * @returns {Promise}
    */
-  async del(key: Buffer): Promise<void> {
-    await this._leveldb.del(key, ENCODING_OPTS)
+  del(key: Buffer) {
+    const formattedKey = key.toString('hex')
+    this._map.delete(formattedKey)
   }
 
   /**
    * Performs a batch operation on db.
-   * @param {Array} opStack A stack of levelup operations
-   * @returns {Promise}
+   * @param {Array} opStack A stack of db operations
    */
-  async batch(opStack: BatchDBOp[]): Promise<void> {
-    await this._leveldb.batch(opStack, ENCODING_OPTS)
+  batch(opStack: BatchDBOp[]) {
+    for (const op of opStack) {
+      if (op.type === 'put') {
+        this.put(op.key, op.value)
+      } else {
+        // delete
+        this.del(op.key)
+      }
+    }
   }
 
   /**
    * Returns a copy of the DB instance, with a reference
-   * to the **same** underlying leveldb instance.
+   * to the **same** underlying db instance.
    */
   copy(): DB {
-    return new DB(this._leveldb)
+    return new DB({ map: this._map })
+  }
+
+  /**
+   * Creates a [[DBMap]] instance by iterating through a leveldb.
+   * @private
+   * @param {LevelUp} db - An abstract-leveldown compliant store.
+   */
+  async _leveldbToMap(db: LevelUp): Promise<DBMap> {
+    return new Promise((resolve) => {
+      const dbMap = new Map()
+
+      db.createReadStream()
+        .on('data', (data) => {
+          const formattedKey = data.key.toString('hex')
+          dbMap.set(formattedKey, data.value)
+        })
+        .on('error', (err) => {
+          throw err
+        })
+        .on('end', () => {
+          resolve(dbMap)
+        })
+    })
   }
 }

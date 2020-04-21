@@ -1,12 +1,12 @@
 import * as tape from 'tape'
 import { CheckpointTrie } from '../src'
 
-tape('offical tests', async function (t) {
+tape('offical tests', function (t) {
   const jsonTests = require('./fixtures/trietest.json').tests
   const testNames = Object.keys(jsonTests)
   let trie = new CheckpointTrie()
 
-  for await (const testName of testNames) {
+  for (const testName of testNames) {
     let inputs = jsonTests[testName].in
     let expect = jsonTests[testName].root
     for (const input of inputs) {
@@ -16,7 +16,7 @@ tape('offical tests', async function (t) {
         } else if (input[i] && typeof input[i] === 'string') {
           input[i] = Buffer.from(input[i])
         }
-        await trie.put(Buffer.from(input[0]), input[1])
+        trie.put(Buffer.from(input[0]), input[1])
       }
     }
     t.equal('0x' + trie.root.toString('hex'), expect)
@@ -25,15 +25,15 @@ tape('offical tests', async function (t) {
   t.end()
 })
 
-tape('offical tests any order', async function (t) {
+tape('offical tests any order', function (t) {
   const jsonTests = require('./fixtures/trieanyorder.json').tests
   const testNames = Object.keys(jsonTests)
   let trie = new CheckpointTrie()
-  for await (const testName of testNames) {
+  for (const testName of testNames) {
     const test = jsonTests[testName]
     const keys = Object.keys(test.in)
     let key: any
-    for await (key of keys) {
+    for (key of keys) {
       let val = test.in[key]
 
       if (key.slice(0, 2) === '0x') {
@@ -44,7 +44,7 @@ tape('offical tests any order', async function (t) {
         val = Buffer.from(val.slice(2), 'hex')
       }
 
-      await trie.put(Buffer.from(key), Buffer.from(val))
+      trie.put(Buffer.from(key), Buffer.from(val))
     }
     t.equal('0x' + trie.root.toString('hex'), test.root)
     trie = new CheckpointTrie()

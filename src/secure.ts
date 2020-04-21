@@ -14,12 +14,12 @@ export class SecureTrie extends CheckpointTrie {
     super(...args)
   }
 
-  static prove(trie: SecureTrie, key: Buffer): Promise<Buffer[]> {
+  static prove(trie: SecureTrie, key: Buffer): Buffer[] {
     const hash = keccak256(key)
     return super.prove(trie, hash)
   }
 
-  static async verifyProof(rootHash: Buffer, key: Buffer, proof: Buffer[]): Promise<Buffer | null> {
+  static verifyProof(rootHash: Buffer, key: Buffer, proof: Buffer[]): Buffer | null {
     const hash = keccak256(key)
     return super.verifyProof(rootHash, hash, proof)
   }
@@ -27,12 +27,12 @@ export class SecureTrie extends CheckpointTrie {
   copy(): SecureTrie {
     const trie = super.copy(false)
     const db = trie.db.copy()
-    return new SecureTrie(db._leveldb, this.root)
+    return new SecureTrie(db._map, this.root)
   }
 
-  async get(key: Buffer): Promise<Buffer | null> {
+  get(key: Buffer): Buffer | null {
     const hash = keccak256(key)
-    const value = await super.get(hash)
+    const value = super.get(hash)
     return value
   }
 
@@ -40,17 +40,17 @@ export class SecureTrie extends CheckpointTrie {
    * For a falsey value, use the original key
    * to avoid double hashing the key.
    */
-  async put(key: Buffer, val: Buffer): Promise<void> {
+  put(key: Buffer, val: Buffer) {
     if (!val || val.toString() === '') {
-      await this.del(key)
+      this.del(key)
     } else {
       const hash = keccak256(key)
-      await super.put(hash, val)
+      super.put(hash, val)
     }
   }
 
-  async del(key: Buffer): Promise<void> {
+  del(key: Buffer) {
     const hash = keccak256(key)
-    await super.del(hash)
+    super.del(hash)
   }
 }

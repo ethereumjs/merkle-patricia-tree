@@ -1,9 +1,7 @@
 import { Trie as BaseTrie } from './baseTrie'
-import { ScratchReadStream } from './scratchReadStream'
 import { ScratchDB } from './scratch'
 import { DB, BatchDBOp } from './db'
 import { TrieNode } from './trieNode'
-const WriteStream = require('level-ws')
 
 export class CheckpointTrie extends BaseTrie {
   _mainDB: DB
@@ -30,8 +28,7 @@ export class CheckpointTrie extends BaseTrie {
   /**
    * Creates a checkpoint that can later be reverted to or committed.
    * After this is called, no changes to the trie will be permanently saved
-   * until `commit` is called. Calling `putRaw` overrides the checkpointing
-   * mechanism and would directly write to db.
+   * until `commit` is called.
    */
   checkpoint() {
     const wasCheckpoint = this.isCheckpoint
@@ -47,22 +44,17 @@ export class CheckpointTrie extends BaseTrie {
    * Commits a checkpoint to disk, if current checkpoint is not nested. If
    * nested, only sets the parent checkpoint as current checkpoint.
    * @method commit
-   * @returns {Promise}
    * @throws If not during a checkpoint phase
    */
-  async commit(): Promise<void> {
+  commit() {
     if (!this.isCheckpoint) {
       throw new Error('trying to commit when not checkpointed')
     }
 
-    await this.lock.wait()
-
     this._checkpoints.pop()
     if (!this.isCheckpoint) {
-      await this._exitCpMode(true)
+      this._exitCpMode(true)
     }
-
-    this.lock.signal()
   }
 
   /**
@@ -70,15 +62,13 @@ export class CheckpointTrie extends BaseTrie {
    * If during a nested checkpoint, sets root to most recent checkpoint, and sets
    * parent checkpoint as current.
    */
-  async revert(): Promise<void> {
-    await this.lock.wait()
+  revert() {
     if (this.isCheckpoint) {
       this.root = this._checkpoints.pop()!
       if (!this.isCheckpoint) {
-        await this._exitCpMode(false)
+        this._exitCpMode(false)
       }
     }
-    this.lock.signal()
   }
 
   /**
@@ -90,7 +80,7 @@ export class CheckpointTrie extends BaseTrie {
    */
   copy(includeCheckpoints: boolean = true): CheckpointTrie {
     const db = this._mainDB.copy()
-    const trie = new CheckpointTrie(db._leveldb, this.root)
+    const trie = new CheckpointTrie(db._map, this.root)
     if (includeCheckpoints && this.isCheckpoint) {
       trie._checkpoints = this._checkpoints.slice()
       trie._scratch = this._scratch!.copy()
@@ -112,40 +102,46 @@ export class CheckpointTrie extends BaseTrie {
    * Exit from checkpoint mode.
    * @private
    */
-  async _exitCpMode(commitState: boolean): Promise<void> {
-    return new Promise(async (resolve) => {
-      const scratch = this._scratch as ScratchDB
-      this._scratch = null
-      this.db = this._mainDB
+  _exitCpMode(commitState: boolean) {
+    const scratch = this._scratch as ScratchDB
+    this._scratch = null
+    this.db = this._mainDB
 
-      if (commitState) {
-        this._createScratchReadStream(scratch)
-          .pipe(WriteStream(this.db._leveldb))
-          .on('close', resolve)
-      } else {
-        process.nextTick(resolve)
-      }
-    })
+    if (commitState) {
+      this._commitChanges(scratch)
+    }
   }
 
   /**
-   * Returns a `ScratchReadStream` based on the state updates
-   * since checkpoint.
-   * @method createScratchReadStream
+   * Commits changes based on the state updates since checkpoint.
+   * @method _commitChanges
+   * @param {ScratchDB} scratchDb
    * @private
    */
-  _createScratchReadStream(scratchDb?: ScratchDB) {
+  _commitChanges(scratchDb?: ScratchDB) {
     let scratch = scratchDb || this._scratch
     if (!scratch) {
       throw new Error('No scratch found to use')
     }
-    const trie = new BaseTrie(scratch._leveldb, this.root)
+    const trie = new BaseTrie(scratch._map, this.root)
     trie.db = scratch
-    return new ScratchReadStream(trie)
+
+    const batchOps: BatchDBOp[] = []
+    const nodes = trie._findDbNodes()
+    for (const foundNode of nodes) {
+      const { nodeRef, node } = foundNode
+      batchOps.push({
+        type: 'put',
+        key: nodeRef,
+        value: node.serialize(),
+      })
+    }
+
+    this.db.batch(batchOps)
   }
 
   /**
-   * Formats node to be saved by levelup.batch.
+   * Formats node to be saved by db.batch.
    * @method _formatNode
    * @private
    * @param {TrieNode} node - the node to format

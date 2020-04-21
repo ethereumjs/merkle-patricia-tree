@@ -1,12 +1,10 @@
-import Semaphore from 'semaphore-async-await'
 import { LevelUp } from 'levelup'
 import { keccak, KECCAK256_RLP } from 'ethereumjs-util'
-import { DB, BatchDBOp, PutBatch } from './db'
-import { TrieReadStream as ReadStream } from './readStream'
-import { PrioritizedTaskExecutor } from './prioritizedTaskExecutor'
+import { DB, DBMap, BatchDBOp, PutBatch } from './db'
 import { bufferToNibbles, matchingNibbleLength, doKeysMatch } from './util/nibbles'
 import {
   TrieNode,
+  Nibbles,
   decodeNode,
   decodeRawNode,
   isRawNode,
@@ -19,18 +17,22 @@ const assert = require('assert')
 
 interface Path {
   node: TrieNode | null
-  remaining: number[]
+  remaining: Nibbles
   stack: TrieNode[]
 }
 
-type FoundNode = (nodeRef: Buffer, node: TrieNode, key: number[], walkController: any) => void
+interface FoundNode {
+  nodeRef: Buffer
+  node: TrieNode
+  key: Nibbles
+}
 
 /**
- * Use `import { BaseTrie as Trie } from 'merkle-patricia-tree'` for the base interface.
- * In Ethereum applications stick with the Secure Trie Overlay `import { SecureTrie } from 'merkle-patricia-tree'`.
+ * Use `import { BaseTrie } from 'merkle-patricia-tree'` for the base interface.
+ * In Ethereum applications use the Secure Trie Overlay: `import { SecureTrie } from 'merkle-patricia-tree'`.
  * The API for the base and the secure interface are about the same.
- * @param {Object} [db] - A [levelup](https://github.com/Level/levelup) instance. By default creates an in-memory [memdown](https://github.com/Level/memdown) instance.
- * If the db is `null` or left undefined, then the trie will be stored in memory via [memdown](https://github.com/Level/memdown)
+ * @param {LevelUp | DBMap} [db] - You may pass in a [levelup](https://github.com/Level/levelup) instance to get loaded into memory.
+ * If the db is `null` or left undefined, then the trie will be stored via an in-memory JavaScript map.
  * @param {Buffer} [root] - A `Buffer` for the root of a previously stored trie
  * @prop {Buffer} root - The current root of the `trie`
  * @prop {Buffer} EMPTY_TRIE_ROOT - The root for an empty trie
@@ -38,20 +40,29 @@ type FoundNode = (nodeRef: Buffer, node: TrieNode, key: number[], walkController
 export class Trie {
   EMPTY_TRIE_ROOT: Buffer
   db: DB
-  protected lock: Semaphore
   private _root: Buffer
 
-  constructor(db?: LevelUp | null, root?: Buffer) {
+  constructor(db?: LevelUp | DBMap | null, root?: Buffer) {
     this.EMPTY_TRIE_ROOT = KECCAK256_RLP
-    this.lock = new Semaphore(1)
-    this.db = db ? new DB(db) : new DB()
+
+    if (db) {
+      if (db instanceof Map) {
+        this.db = new DB({ map: db })
+      } else {
+        // db is instanceOf LevelUp
+        this.db = new DB({ leveldb: db })
+      }
+    } else {
+      this.db = new DB()
+    }
+
     this._root = this.EMPTY_TRIE_ROOT
     if (root) {
       this.setRoot(root)
     }
   }
 
-  static async fromProof(proofNodes: Buffer[], proofTrie?: Trie): Promise<Trie> {
+  static fromProof(proofNodes: Buffer[], proofTrie?: Trie): Trie {
     let opStack = proofNodes.map((nodeValue) => {
       return {
         type: 'put',
@@ -67,26 +78,23 @@ export class Trie {
       }
     }
 
-    await proofTrie.db.batch(opStack)
+    proofTrie.db.batch(opStack)
+
     return proofTrie
   }
 
-  static async prove(trie: Trie, key: Buffer): Promise<Buffer[]> {
-    const { stack } = await trie.findPath(key)
+  static prove(trie: Trie, key: Buffer): Buffer[] {
+    const { stack } = trie.findPath(key)
     const p = stack.map((stackElem) => {
       return stackElem.serialize()
     })
     return p
   }
 
-  static async verifyProof(
-    rootHash: Buffer,
-    key: Buffer,
-    proofNodes: Buffer[],
-  ): Promise<Buffer | null> {
+  static verifyProof(rootHash: Buffer, key: Buffer, proofNodes: Buffer[]): Buffer | null {
     let proofTrie = new Trie(null, rootHash)
     try {
-      proofTrie = await Trie.fromProof(proofNodes, proofTrie)
+      proofTrie = Trie.fromProof(proofNodes, proofTrie)
     } catch (e) {
       throw new Error('Invalid proof nodes given')
     }
@@ -114,10 +122,10 @@ export class Trie {
    * @method get
    * @memberof Trie
    * @param {Buffer} key - the key to search for
-   * @returns {Promise} - Returns a promise that resolves to `Buffer` if a value was found or `null` if no value was found.
+   * @returns {Buffer | null} - Returns `Buffer` if a value was found or `null` if no value was found.
    */
-  async get(key: Buffer): Promise<Buffer | null> {
-    const { node, remaining } = await this.findPath(key)
+  get(key: Buffer): Buffer | null {
+    const { node, remaining } = this.findPath(key)
     let value = null
     if (node && remaining.length === 0) {
       value = node.value
@@ -131,45 +139,39 @@ export class Trie {
    * @memberof Trie
    * @param {Buffer} key
    * @param {Buffer} value
-   * @returns {Promise}
    */
-  async put(key: Buffer, value: Buffer): Promise<void> {
+  put(key: Buffer, value: Buffer) {
     // If value is empty, delete
     if (!value || value.toString() === '') {
-      return await this.del(key)
+      return this.del(key)
     }
 
-    await this.lock.wait()
     if (this.root.equals(KECCAK256_RLP)) {
       // If no root, initialize this trie
-      await this._createInitialNode(key, value)
+      this._createInitialNode(key, value)
     } else {
       // First try to find the given key or its nearest node
-      const { remaining, stack } = await this.findPath(key)
+      const { remaining, stack } = this.findPath(key)
       // then update
-      await this._updateNode(key, value, remaining, stack)
+      this._updateNode(key, value, remaining, stack)
     }
-    this.lock.signal()
   }
 
   /**
-   * deletes a value given a `key`
+   * Deletes a value given a `key`
    * @method del
    * @memberof Trie
    * @param {Buffer} key
-   * @returns {Promise}
    */
-  async del(key: Buffer): Promise<void> {
-    await this.lock.wait()
-    const { node, stack } = await this.findPath(key)
+  del(key: Buffer) {
+    const { node, stack } = this.findPath(key)
     if (node) {
-      await this._deleteNode(key, stack)
+      this._deleteNode(key, stack)
     }
-    this.lock.signal()
   }
 
-  // retrieves a node from dbs by hash
-  async _lookupNode(node: Buffer | Buffer[]): Promise<TrieNode | null> {
+  /** Retrieves a node from db by hash **/
+  _lookupNode(node: Buffer | Buffer[]): TrieNode | null {
     if (isRawNode(node)) {
       return decodeRawNode(node as Buffer[])
     }
@@ -177,7 +179,7 @@ export class Trie {
     let value = null
     let foundNode = null
 
-    value = await this.db.get(node as Buffer)
+    value = this.db.get(node as Buffer)
 
     if (value) {
       foundNode = decodeNode(value)
@@ -186,11 +188,11 @@ export class Trie {
     return foundNode
   }
 
-  // writes a single node to dbs
-  async _putNode(node: TrieNode): Promise<void> {
+  /** Writes a single node to db **/
+  _putNode(node: TrieNode) {
     const hash = node.hash()
     const serialized = node.serialize()
-    await this.db.put(hash, serialized)
+    this.db.put(hash, serialized)
   }
 
   /**
@@ -199,91 +201,72 @@ export class Trie {
    * @method findPath
    * @memberof Trie
    * @param {Buffer} key - the search key
-   * @returns {Promise}
    */
-  async findPath(key: Buffer): Promise<Path> {
-    return new Promise(async (resolve) => {
-      let stack: TrieNode[] = []
-      let targetKey = bufferToNibbles(key)
+  findPath(key: Buffer): Path {
+    let stack: TrieNode[] = []
+    let targetKey = bufferToNibbles(key)
 
-      // walk trie and process nodes
-      await this._walkTrie(this.root, async (nodeRef, node, keyProgress, walkController) => {
-        const keyRemainder = targetKey.slice(matchingNibbleLength(keyProgress, targetKey))
-        stack.push(node)
+    // walk trie and process nodes
+    const nodes = this._walkTrie(this.root, targetKey)
 
-        if (node instanceof BranchNode) {
-          if (keyRemainder.length === 0) {
-            // we exhausted the key without finding a node
-            resolve({ node, remaining: [], stack })
+    for (const foundNode of nodes) {
+      const { node, key: keyProgress } = foundNode
+
+      const keyRemainder = targetKey.slice(matchingNibbleLength(keyProgress, targetKey))
+      stack.push(node)
+      if (node instanceof BranchNode) {
+        if (keyRemainder.length === 0) {
+          // we exhausted the key without finding a node
+          return { node, remaining: [], stack }
+        } else {
+          const branchIndex = keyRemainder[0]
+          const branchNode = node.getBranch(branchIndex)
+          if (!branchNode) {
+            // there are no more nodes to find and we didn't find the key
+            return { node: null, remaining: keyRemainder, stack }
           } else {
-            const branchIndex = keyRemainder[0]
-            const branchNode = node.getBranch(branchIndex)
-            if (!branchNode) {
-              // there are no more nodes to find and we didn't find the key
-              resolve({ node: null, remaining: keyRemainder, stack })
-            } else {
-              // node found, continuing search
-              await walkController.only(branchIndex)
-            }
-          }
-        } else if (node instanceof LeafNode) {
-          if (doKeysMatch(keyRemainder, node.key)) {
-            // keys match, return node with empty key
-            resolve({ node, remaining: [], stack })
-          } else {
-            // reached leaf but keys dont match
-            resolve({ node: null, remaining: keyRemainder, stack })
-          }
-        } else if (node instanceof ExtensionNode) {
-          const matchingLen = matchingNibbleLength(keyRemainder, node.key)
-          if (matchingLen !== node.key.length) {
-            // keys don't match, fail
-            resolve({ node: null, remaining: keyRemainder, stack })
-          } else {
-            // keys match, continue search
-            await walkController.next()
+            // node found, continuing search
           }
         }
-      })
-
-      // Resolve if _walkTrie finishes without finding any nodes
-      resolve({ node: null, remaining: [], stack })
-    })
-  }
-
-  /*
-   * Finds all nodes that store k,v values
-   */
-  async _findValueNodes(onFound: FoundNode): Promise<void> {
-    await this._walkTrie(this.root, async (nodeRef, node, key, walkController) => {
-      let fullKey = key
-
-      if (node instanceof LeafNode) {
-        fullKey = key.concat(node.key)
-        // found leaf node!
-        onFound(nodeRef, node, fullKey, walkController)
-      } else if (node instanceof BranchNode && node.value) {
-        // found branch with value
-        onFound(nodeRef, node, fullKey, walkController)
-      } else {
-        // keep looking for value nodes
-        await walkController.next()
+      } else if (node instanceof LeafNode) {
+        if (doKeysMatch(keyRemainder, node.key)) {
+          // keys match, return node with empty key
+          return { node, remaining: [], stack }
+        } else {
+          // reached leaf but keys dont match
+          return { node: null, remaining: keyRemainder, stack }
+        }
+      } else if (node instanceof ExtensionNode) {
+        const matchingLen = matchingNibbleLength(keyRemainder, node.key)
+        if (matchingLen !== node.key.length) {
+          // keys don't match, fail
+          return { node: null, remaining: keyRemainder, stack }
+        } else {
+          // keys match, continue search
+        }
       }
-    })
+    }
+
+    // Return if _walkTrie finishes without finding any nodes
+    return { node: null, remaining: [], stack }
   }
 
   /*
    * Finds all nodes that are stored directly in the db
    * (some nodes are stored raw inside other nodes)
    */
-  async _findDbNodes(onFound: FoundNode): Promise<void> {
-    await this._walkTrie(this.root, async (nodeRef, node, key, walkController) => {
+  _findDbNodes(): FoundNode[] {
+    const foundDbNodes: FoundNode[] = []
+    const nodes = this._walkTrie(this.root)
+    for (const foundNode of nodes) {
+      const { nodeRef, node, key } = foundNode
       if (isRawNode(nodeRef)) {
-        await walkController.next()
+        // look for next
       } else {
-        onFound(nodeRef, node, key, walkController)
+        foundDbNodes.push({ nodeRef, node, key })
       }
-    })
+    }
+    return foundDbNodes
   }
 
   /**
@@ -292,16 +275,10 @@ export class Trie {
    * @private
    * @param {Buffer} key
    * @param {Buffer} value
-   * @param {number[]} keyRemainder
+   * @param {Nibbles} keyRemainder
    * @param {TrieNode[]} stack
-   * @returns {Promise}
    */
-  async _updateNode(
-    k: Buffer,
-    value: Buffer,
-    keyRemainder: number[],
-    stack: TrieNode[],
-  ): Promise<void> {
+  _updateNode(k: Buffer, value: Buffer, keyRemainder: Nibbles, stack: TrieNode[]) {
     const toSave: BatchDBOp[] = []
     const lastNode = stack.pop()
     if (!lastNode) {
@@ -392,7 +369,7 @@ export class Trie {
       }
     }
 
-    await this._saveStack(key, stack, toSave)
+    this._saveStack(key, stack, toSave)
   }
 
   /**
@@ -400,99 +377,61 @@ export class Trie {
    * @method _walkTrie
    * @private
    * @param {Buffer} root
-   * @param {Function} onNode - callback to call when a node is found
-   * @returns {Promise} - returns when finished walking trie
+   * @param {Nibbles} targetKey
+   * @returns {FoundNode[]} - An array of nodes found
    */
-  async _walkTrie(root: Buffer, onNode: FoundNode): Promise<void> {
-    return new Promise(async (resolve) => {
-      const self = this
-      root = root || this.root
+  _walkTrie(root: Buffer, targetKey?: Nibbles): FoundNode[] {
+    const self = this
+    root = root || this.root
+    const nodes: FoundNode[] = []
 
-      if (root.equals(KECCAK256_RLP)) {
-        return resolve()
-      }
+    if (root.equals(KECCAK256_RLP)) {
+      return []
+    }
 
-      // The maximum pool size should be high enough to utilize
-      // the parallelizability of reading nodes from disk and
-      // low enough to utilize the prioritisation of node lookup.
-      const maxPoolSize = 500
-      const taskExecutor = new PrioritizedTaskExecutor(maxPoolSize)
-
-      const processNode = async (
-        nodeRef: Buffer,
-        node: TrieNode,
-        key: number[] = [],
-      ): Promise<void> => {
-        const walkController = {
-          next: async () => {
-            if (node instanceof LeafNode) {
-              if (taskExecutor.finished()) {
-                resolve()
-              }
-              return
-            }
-            let children
-            if (node instanceof ExtensionNode) {
-              children = [[node.key, node.value]]
-            } else if (node instanceof BranchNode) {
-              children = node.getChildren().map((b) => [[b[0]], b[1]])
-            }
-            if (!children) {
-              // Node has no children
-              return resolve()
-            }
-            for (const child of children) {
-              const keyExtension = child[0] as number[]
-              const childRef = child[1] as Buffer
-              const childKey = key.concat(keyExtension)
-              const priority = childKey.length
-              taskExecutor.execute(priority, async (taskCallback: Function) => {
-                const childNode = await self._lookupNode(childRef)
-                taskCallback()
-                if (childNode) {
-                  processNode(childRef, childNode as TrieNode, childKey)
-                }
-              })
-            }
-          },
-          only: async (childIndex: number) => {
-            if (!(node instanceof BranchNode)) {
-              throw new Error('Expected branch node')
-            }
-            const childRef = node.getBranch(childIndex)
-            if (!childRef) {
-              throw new Error('Could not get branch of childIndex')
-            }
-            const childKey = key.slice()
-            childKey.push(childIndex)
-            const priority = childKey.length
-            taskExecutor.execute(priority, async (taskCallback: Function) => {
-              const childNode = await self._lookupNode(childRef)
-              taskCallback()
-              if (childNode) {
-                await processNode(childRef as Buffer, childNode, childKey)
-              } else {
-                // could not find child node
-                resolve()
-              }
-            })
-          },
-        }
-
-        if (node) {
-          onNode(nodeRef, node, key, walkController)
-        } else {
-          resolve()
-        }
-      }
-
-      const node = await this._lookupNode(root)
+    const processNode = (nodeRef: Buffer, node: TrieNode, key: Nibbles = []) => {
       if (node) {
-        await processNode(root, node as TrieNode, [])
-      } else {
-        resolve()
+        nodes.push({ nodeRef, node, key })
       }
-    })
+
+      if (node instanceof LeafNode) {
+        return
+      }
+
+      // Process children
+      let children: Array<[Nibbles, Buffer | Buffer[]]>
+      if (node instanceof ExtensionNode) {
+        children = [[node.key, node.value]]
+      } else if (node instanceof BranchNode) {
+        children = node.getChildren().map((b) => [[b[0]], b[1]])
+      } else {
+        // Node has no children
+        return
+      }
+      for (const [keyExtension, childRef] of children) {
+        const childKey = key.concat(keyExtension)
+
+        if (targetKey) {
+          let matchingTarget = [...targetKey]
+          // setting array.length is a fast way to shorten it
+          matchingTarget.length = childKey.length
+          // stringifying the arrays is an easy way to compare their items in sequence
+          if (matchingTarget.toString() !== childKey.toString()) {
+            // Skip child if not relevant
+            continue
+          }
+        }
+        const childNode = self._lookupNode(childRef)
+        processNode(childRef as Buffer, childNode as TrieNode, childKey)
+      }
+    }
+
+    const node = this._lookupNode(root)
+    if (node) {
+      processNode(root, node as TrieNode, [])
+    }
+
+    return nodes
   }
 
   /**
@@ -502,9 +441,8 @@ export class Trie {
    * @param {Array} key - the key. Should follow the stack
    * @param {Array} stack - a stack of nodes to the value given by the key
    * @param {Array} opStack - a stack of levelup operations to commit at the end of this funciton
-   * @returns {Promise}
    */
-  async _saveStack(key: number[], stack: TrieNode[], opStack: BatchDBOp[]): Promise<void> {
+  _saveStack(key: Nibbles, stack: TrieNode[], opStack: BatchDBOp[]) {
     let lastRoot
 
     // update nodes
@@ -530,12 +468,12 @@ export class Trie {
       this.root = lastRoot
     }
 
-    await this.db.batch(opStack)
+    this.db.batch(opStack)
   }
 
-  async _deleteNode(k: Buffer, stack: TrieNode[]): Promise<void> {
+  _deleteNode(k: Buffer, stack: TrieNode[]) {
     const processBranchNode = (
-      key: number[],
+      key: Nibbles,
       branchKey: number,
       branchNode: TrieNode,
       parentNode: TrieNode,
@@ -632,7 +570,7 @@ export class Trie {
       const branchNodeKey = branchNodes[0][0]
 
       // look up node
-      const foundNode = await this._lookupNode(branchNode)
+      const foundNode = this._lookupNode(branchNode)
       if (foundNode) {
         key = processBranchNode(
           key,
@@ -641,7 +579,7 @@ export class Trie {
           parentNode as TrieNode,
           stack,
         )
-        await this._saveStack(key, stack, opStack)
+        this._saveStack(key, stack, opStack)
       }
     } else {
       // simple removing a leaf and recaluclation the stack
@@ -650,19 +588,19 @@ export class Trie {
       }
 
       stack.push(lastNode)
-      await this._saveStack(key, stack, opStack)
+      this._saveStack(key, stack, opStack)
     }
   }
 
-  // Creates the initial node from an empty tree
-  async _createInitialNode(key: Buffer, value: Buffer): Promise<void> {
+  /** Creates the initial node from an empty tree **/
+  _createInitialNode(key: Buffer, value: Buffer) {
     const newNode = new LeafNode(bufferToNibbles(key), value)
     this.root = newNode.hash()
-    await this._putNode(newNode)
+    this._putNode(newNode)
   }
 
   /**
-   * Formats node to be saved by levelup.batch.
+   * Formats node to be saved by db.batch.
    * @method _formatNode
    * @private
    * @param {TrieNode} node - the node to format
@@ -692,21 +630,11 @@ export class Trie {
     return node.raw()
   }
 
-  /**
-   * The `data` event is given an `Object` that has two properties; the `key` and the `value`. Both should be Buffers.
-   * @method createReadStream
-   * @memberof Trie
-   * @return {stream.Readable} Returns a [stream](https://nodejs.org/dist/latest-v5.x/docs/api/stream.html#stream_class_stream_readable) of the contents of the `trie`
-   */
-  createReadStream(): ReadStream {
-    return new ReadStream(this)
-  }
-
   // creates a new trie backed by the same db
   // and starting at the same root
   copy(): Trie {
     const db = this.db.copy()
-    return new Trie(db._leveldb, this.root)
+    return new Trie(db._map, this.root)
   }
 
   /**
@@ -721,19 +649,18 @@ export class Trie {
    *  , { type: 'put', key: Buffer.from('spouse'), value: Buffer.from('Kim Young-sook') }
    *  , { type: 'put', key: Buffer.from('occupation'), value: Buffer.from('Clown') }
    * ]
-   * await trie.batch(ops)
+   * trie.batch(ops)
    * @param {Array} ops
-   * @returns {Promise}
    */
-  async batch(ops: BatchDBOp[]): Promise<void> {
-    for await (const op of ops) {
+  batch(ops: BatchDBOp[]) {
+    for (const op of ops) {
       if (op.type === 'put') {
         if (!op.value) {
           throw new Error('Invalid batch db operation')
         }
-        await this.put(op.key, op.value)
+        this.put(op.key, op.value)
       } else if (op.type === 'del') {
-        await this.del(op.key)
+        this.del(op.key)
       }
     }
   }
@@ -741,8 +668,8 @@ export class Trie {
   /**
    * Checks if a given root exists.
    */
-  async checkRoot(root: Buffer): Promise<boolean> {
-    const value = await this._lookupNode(root)
+  checkRoot(root: Buffer): boolean {
+    const value = this._lookupNode(root)
     return !!value
   }
 }

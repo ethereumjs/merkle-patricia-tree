@@ -1,4 +1,4 @@
-import { DB, ENCODING_OPTS } from './db'
+import { DB } from './db'
 
 /**
  * An in-memory wrap over `DB` with an upstream DB
@@ -18,38 +18,22 @@ export class ScratchDB extends DB {
    * Similar to `DB.get`, but first searches in-memory
    * scratch DB, if key not found, searches upstream DB.
    */
-  async get(key: Buffer): Promise<Buffer | null> {
-    let value = null
+  get(key: Buffer): Buffer | null {
+    const formattedKey = key.toString('hex')
     // First, search in-memory db
-    try {
-      value = await this._leveldb.get(key, ENCODING_OPTS)
-    } catch (error) {
-      if (error.notFound) {
-        // not found, returning null
-      } else {
-        throw error
-      }
-    }
+    let value = this._map.get(formattedKey)
 
     // If not found, try searching upstream db
-    if (!value && this._upstream._leveldb) {
-      try {
-        value = await this._upstream._leveldb.get(key, ENCODING_OPTS)
-      } catch (error) {
-        if (error.notFound) {
-          // not found, returning null
-        } else {
-          throw error
-        }
-      }
+    if (!value && this._upstream._map) {
+      value = this._upstream._map.get(formattedKey)
     }
 
-    return value
+    return value || null
   }
 
   copy(): ScratchDB {
     const scratch = new ScratchDB(this._upstream)
-    scratch._leveldb = this._leveldb
+    scratch._map = this._map
     return scratch
   }
 }
