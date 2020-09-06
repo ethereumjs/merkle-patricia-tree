@@ -1,3 +1,5 @@
+import Semaphore from 'semaphore-async-await'
+
 interface Task {
   priority: number
   fn: Function
@@ -10,6 +12,8 @@ export class PrioritizedTaskExecutor {
   private currentPoolSize: number
   /** The task queue */
   private queue: Task[]
+  /** The Lock */
+  private lock: Semaphore
 
   /**
    * Executes tasks up to maxPoolSize at a time, other items are put in a priority queue.
@@ -21,6 +25,7 @@ export class PrioritizedTaskExecutor {
     this.maxPoolSize = maxPoolSize
     this.currentPoolSize = 0
     this.queue = []
+    this.lock = new Semaphore(1)
   }
 
   /**
@@ -29,17 +34,22 @@ export class PrioritizedTaskExecutor {
    * @param priority The priority of the task
    * @param fn The function that accepts the callback, which must be called upon the task completion.
    */
-  execute(priority: number, fn: Function) {
-    if (this.currentPoolSize < this.maxPoolSize) {
-      this.currentPoolSize++
-      fn(() => {
-        this.currentPoolSize--
-        if (this.queue.length > 0) {
-          const item = this.queue.shift()
-          this.execute(item!.priority, item!.fn)
+  async execute(priority: number, fn: Function) {
+    let self = this
+    function runTask() {
+      self.currentPoolSize++
+      fn(async () => {
+        self.currentPoolSize--
+        if (self.queue.length > 0) {
+          const item = self.queue.shift()
+          await self.execute(item!.priority, item!.fn)
         }
       })
+    }
+    if (this.currentPoolSize < this.maxPoolSize) {
+      runTask()
     } else {
+      await this.lock.wait()
       if (this.queue.length == 0) {
         this.queue.push({ priority, fn })
       } else {
@@ -50,15 +60,24 @@ export class PrioritizedTaskExecutor {
           return Math.floor(left + (right - left) / 2)
         }
         while (true) {
+          // note that there is a special case: it could be that during sorting, a Task is finished (reducing currentPoolSize by 1), but this Task was not yet inserted
+          // therefore, if we want to insert the item we explicitly check that we indeed should Queue it, if not, we execute it and do not insert it.
           let index = mid()
           let value = this.queue[index].priority
-          console.log(left, right, index, value)
           if (value == priority) {
-            this.queue.splice(index, 0, { priority, fn })
+            if (this.currentPoolSize < this.maxPoolSize) {
+              runTask()
+            } else {
+              this.queue.splice(index, 0, { priority, fn })
+            }
             break
           }
           if (left == right) {
-            this.queue.splice(left, 0, { priority, fn })
+            if (this.currentPoolSize < this.maxPoolSize) {
+              runTask()
+            } else {
+              this.queue.splice(left, 0, { priority, fn })
+            }
             break
           }
 
@@ -69,6 +88,7 @@ export class PrioritizedTaskExecutor {
           }
         }
       }
+      this.lock.signal()
     }
   }
 
