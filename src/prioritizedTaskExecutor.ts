@@ -35,13 +35,40 @@ export class PrioritizedTaskExecutor {
       fn(() => {
         this.currentPoolSize--
         if (this.queue.length > 0) {
-          this.queue.sort((a, b) => b.priority - a.priority)
           const item = this.queue.shift()
           this.execute(item!.priority, item!.fn)
         }
       })
     } else {
-      this.queue.push({ priority, fn })
+      if (this.queue.length == 0) {
+        this.queue.push({ priority, fn })
+      } else {
+        // insert the item in the queue using binary search
+        let left = 0
+        let right = this.queue.length
+        let mid = () => {
+          return Math.floor(left + (right - left) / 2)
+        }
+        while (true) {
+          let index = mid()
+          let value = this.queue[index].priority
+          console.log(left, right, index, value)
+          if (value == priority) {
+            this.queue.splice(index, 0, { priority, fn })
+            break
+          }
+          if (left == right) {
+            this.queue.splice(left, 0, { priority, fn })
+            break
+          }
+
+          if (value > priority) {
+            left = index
+          } else {
+            right = index
+          }
+        }
+      }
     }
   }
 
