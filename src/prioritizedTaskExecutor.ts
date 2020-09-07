@@ -41,7 +41,9 @@ export class PrioritizedTaskExecutor {
       fn(async () => {
         self.currentPoolSize--
         if (self.queue.length > 0) {
+          await self.lock.acquire()
           const item = self.queue.shift()
+          await self.lock.signal()
           await self.execute(item!.priority, item!.fn)
         }
       })
@@ -80,11 +82,18 @@ export class PrioritizedTaskExecutor {
             }
             break
           }
-
           if (value > priority) {
-            left = index
+            left = index + 1
           } else {
-            right = index
+            right = index - 1
+          }
+          if (left > right) {
+            if (this.currentPoolSize < this.maxPoolSize) {
+              runTask()
+            } else {
+              this.queue.splice(left, 0, { priority, fn })
+            }
+            break
           }
         }
       }
